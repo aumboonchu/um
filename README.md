@@ -1,0 +1,3 @@
+# SmartCart
+
+Initial repository setup.
