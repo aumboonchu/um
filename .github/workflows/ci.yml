@@ -1,0 +1,36 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Generate Worker binding types
+        working-directory: apps/api
+        run: npx wrangler types src/env.d.ts
+      - name: Check Worker binding types
+        run: npm run types:check --workspace=@smartcart/api
+      - name: Type check
+        run: npm run typecheck
+      - name: Run API tests
+        run: npm test
+      - name: Build release artifacts
+        run: npm run build
+

@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "smartcart-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ORIGIN": "http://localhost:5173",
+    "API_ORIGIN": "http://localhost:8787",
+    "ENVIRONMENT": "local"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "smartcart-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "smartcart-api-staging",
+      "vars": {
+        "APP_ORIGIN": "https://aumboonchu.github.io",
+        "API_ORIGIN": "https://smartcart-api-staging.jib-inventory.workers.dev",
+        "ENVIRONMENT": "staging"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "smartcart-staging",
+          "database_id": "785ee6e9-1bfe-490f-8b69-eaac4d14adfd",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "production": {
+      "name": "smartcart-api-production",
+      "secrets": {
+        "required": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
+      },
+      "vars": {
+        "APP_ORIGIN": "https://app.YOUR_DOMAIN",
+        "API_ORIGIN": "https://api.YOUR_DOMAIN",
+        "ENVIRONMENT": "production"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "smartcart-production",
+          "database_id": "0db2d1f8-a199-412b-ab12-20d980907f2c",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}
+

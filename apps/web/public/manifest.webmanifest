@@ -1,0 +1,11 @@
+{
+  "name": "SmartCart",
+  "short_name": "SmartCart",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8faf9",
+  "theme_color": "#0f945c",
+  "description": "บันทึกและติดตามการซื้อสินค้า"
+}
+

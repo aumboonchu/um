@@ -1,0 +1,25 @@
+{
+  "name": "@smartcart/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "wrangler deploy --dry-run --env=\"\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "types": "wrangler types src/env.d.ts",
+    "types:check": "wrangler types src/env.d.ts --check"
+  },
+  "dependencies": {
+    "hono": "^4.8.12",
+    "jose": "^6.2.10"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.31",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.35.0"
+  }
+}
+

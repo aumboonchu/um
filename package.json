@@ -1,0 +1,20 @@
+{
+  "name": "smartcart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SmartCart PWA monorepo",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=@smartcart/web",
+    "dev:api": "npm run dev --workspace=@smartcart/api",
+    "build": "npm run build --workspace=@smartcart/web && npm run build --workspace=@smartcart/api",
+    "test": "npm run test --workspace=@smartcart/api",
+    "typecheck": "npm run typecheck --workspace=@smartcart/web && npm run typecheck --workspace=@smartcart/api"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+
