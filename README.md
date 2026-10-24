@@ -4,7 +4,7 @@ SmartCart is a local-first PWA for recording purchases with UPC product lookup. 
 
 ## What is included
 
-- Google OpenID Connect login with PKCE, nonce, opaque HttpOnly sessions, and D1-backed replay protection.
+- Google OpenID Connect login with PKCE, nonce, browser-bound one-use handoff codes, opaque bearer sessions, and D1-backed replay protection.
 - UPC-first product lookup: D1 cache first, then public Big C product data when available.
 - Offline-first purchase capture with IndexedDB, UUID idempotency, D1 sync, and a pending-sync indicator.
 - Purchase history and a per-user product library with search and cursor pagination.
@@ -37,15 +37,15 @@ Do these steps before running either deployment workflow. Placeholder IDs and `Y
    npx wrangler d1 create smartcart-production
    ```
 
-2. Choose same-site custom domains, for example `app.example.com` for GitHub Pages and `api.example.com` for the Worker. Update `APP_ORIGIN` and `API_ORIGIN` for both named Worker environments. Add `api.example.com` as a Worker Custom Domain in Cloudflare.
+2. Set `APP_ORIGIN` (origin only, for CORS), `APP_URL` (full app entry URL including its path), and `API_ORIGIN` for each named Worker environment. Staging uses the free URLs `https://aumboonchu.github.io/um/` and `https://smartcart-api-staging.jib-inventory.workers.dev`. Production still needs its own configuration.
 
-   A custom app domain is important: a `github.io` app calling a `workers.dev` API is cross-site, so it is not a reliable production configuration for the `SameSite=Lax` login session.
+   Google redirects to the Worker, which redirects to the exact app URL with a 60-second one-use code in the URL fragment. The app clears the fragment, exchanges that code using its own PKCE verifier, and sends its opaque session in the `Authorization` header. This works without third-party cookies or a purchased domain. The session is stored in `sessionStorage` for the current browser tab/session; closing it may require another login. It is accessible to same-origin JavaScript, so avoid adding untrusted scripts. Google credentials and Google tokens never reach the frontend.
 
 3. In Google Cloud, register both redirect URLs:
 
    ```text
    https://api.example.com/auth/google/callback
-   https://api-staging.example.com/auth/google/callback
+   https://smartcart-api-staging.jib-inventory.workers.dev/auth/google/callback
    ```
 
 4. Set each Worker environment's secrets interactively. Never add them to `wrangler.jsonc`, source code, GitHub Pages variables, or command arguments.
@@ -56,6 +56,8 @@ Do these steps before running either deployment workflow. Placeholder IDs and `Y
    npx wrangler secret put GOOGLE_CLIENT_ID --env production
    npx wrangler secret put GOOGLE_CLIENT_SECRET --env production
    ```
+
+   For the Google OAuth client, select **Web application**, allow `https://aumboonchu.github.io` as the JavaScript origin, and register the exact staging callback above. Only `openid`, `email`, and `profile` are requested. In Testing mode, add the Google accounts that will test the app. `/auth/config` reports `googleEnabled: false` until both credentials are present; the UI disables the login button and shows a setup message.
 
 5. In the GitHub repository, create the public Actions variable `VITE_API_ORIGIN` with the production API origin, for example `https://api.example.com`. Set `VITE_BASE_PATH` to `/` when using a custom Pages domain, or leave it unset to use `/<repository-name>/` for the default GitHub Pages URL.
 
@@ -75,6 +77,7 @@ The API workflow never runs automatically on a source push. This prevents a code
 ## QA checklist
 
 - Google login returns to the exact app origin and logout invalidates the session.
+- Google login works with third-party cookies blocked; a replayed, expired, or wrong-browser handoff cannot create a session.
 - A known UPC finds a D1 product; a new UPC either imports public Big C data or offers manual entry without bypassing bot protection.
 - In Safari and Home Screen mode on iPhone: look up a product, enter Airplane Mode, save a purchase, reconnect, and confirm exactly one record appears in History.
 - Confirm pending-sync count is visible and the app warns when persistent storage is unavailable.

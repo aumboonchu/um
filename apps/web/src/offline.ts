@@ -1,3 +1,5 @@
+import { apiFetch } from './auth-client'
+
 export type CachedProduct = {
   id: string
   upc: string
@@ -95,9 +97,8 @@ export async function syncPendingOperations(apiOrigin: string): Promise<SyncSumm
     return { synced: 0, validationErrors: 0, retryableErrors: 0, pending: allOperations.length }
   }
 
-  const response = await fetch(`${apiOrigin}/api/v1/sync`, {
+  const response = await apiFetch(apiOrigin, '/api/v1/sync', {
     method: 'POST',
-    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: await getClientId(database), operations }),
   })

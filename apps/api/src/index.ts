@@ -4,8 +4,10 @@ import {
   clearSessionCookie,
   completeGoogleLogin,
   currentAccount,
+  exchangeBrowserLogin,
   getRequestId,
   isTrustedOrigin,
+  isGoogleLoginConfigured,
   revokeCurrentSession,
   startGoogleLogin,
   type AuthEnv,
@@ -25,7 +27,7 @@ app.use(
     origin: (origin, context) => {
       return origin === context.env.APP_ORIGIN ? origin : ''
     },
-    allowHeaders: ['Content-Type', 'X-Request-Id'],
+    allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   }),
@@ -33,6 +35,7 @@ app.use(
 
 app.use('*', async (context, next) => {
   await next()
+  context.header('Cache-Control', 'no-store')
   context.header('Referrer-Policy', 'no-referrer')
   context.header('X-Content-Type-Options', 'nosniff')
   context.header('X-Frame-Options', 'DENY')
@@ -42,6 +45,15 @@ app.use('*', async (context, next) => {
     context.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   }
 })
+
+app.use('/auth/*', async (context, next) => {
+  context.header('Cache-Control', 'no-store')
+  await next()
+  context.header('Cache-Control', 'no-store')
+})
+
+app.get('/auth/config', (context) => context.json({ data: { googleEnabled: isGoogleLoginConfigured(context.env) } }))
+app.post('/auth/exchange', (context) => exchangeBrowserLogin(context.req.raw, context.env))
 
 app.get('/api/v1/health', (context) => {
   return context.json({

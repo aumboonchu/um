@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { apiFetch, clearBrowserSession, finishGoogleLogin, startGoogleLogin } from './auth-client'
 import {
   cacheProduct,
   findCachedProduct,
@@ -81,14 +82,12 @@ function App() {
   const [isLoadingProducts, setIsLoadingProducts] = useState(false)
   const [productsMessage, setProductsMessage] = useState<string | null>(null)
   const [authMessage, setAuthMessage] = useState<string | null>(null)
+  const [googleEnabled, setGoogleEnabled] = useState(false)
+  const [isSigningIn, setIsSigningIn] = useState(false)
 
   useEffect(() => {
     void loadAccount()
     void refreshPendingSyncCount()
-    if (new URLSearchParams(window.location.search).get('auth') === 'setup_required') {
-      setAuthMessage('Google Login สำหรับ staging ยังอยู่ระหว่างตั้งค่า')
-      window.history.replaceState({}, '', window.location.pathname)
-    }
   }, [])
 
   useEffect(() => {
@@ -120,10 +119,25 @@ function App() {
 
   async function loadAccount() {
     try {
-      const response = await fetch(`${apiOrigin}/auth/me`, { credentials: 'include' })
+      const result = new URLSearchParams(window.location.search).get('auth')
+      if (result) {
+        setAuthMessage(result === 'setup_required' ? 'Google Login ยังอยู่ระหว่างตั้งค่า' : 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองอีกครั้ง')
+        const url = new URL(window.location.href)
+        url.searchParams.delete('auth')
+        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+      }
+      await finishGoogleLogin(apiOrigin)
+      const config = await apiFetch(apiOrigin, '/auth/config')
+      if (!config.ok) throw new Error('AUTH_CONFIG_FAILED')
+      const settings = await config.json() as { data: { googleEnabled: boolean } }
+      setGoogleEnabled(settings.data.googleEnabled)
+      if (!settings.data.googleEnabled) setAuthMessage('Google Login ยังอยู่ระหว่างตั้งค่า')
+      const response = await apiFetch(apiOrigin, '/auth/me')
       if (!response.ok) return
       const payload = (await response.json()) as AuthResponse
       setAccount(payload.data.authenticated ? payload.data.account : null)
+    } catch {
+      setAuthMessage('ยังเชื่อมต่อการเข้าสู่ระบบไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่')
     } finally {
       setIsLoading(false)
     }
@@ -190,23 +204,33 @@ function App() {
     const params = new URLSearchParams({ limit: '20' })
     if (query.trim()) params.set('q', query.trim())
     if (cursor) params.set('cursor', cursor)
-    const response = await fetch(`${apiOrigin}${path}?${params.toString()}`, { credentials: 'include' })
+    const response = await apiFetch(apiOrigin, `${path}?${params.toString()}`)
     if (!response.ok) throw new Error(`PAGE_REQUEST_FAILED:${response.status}`)
     return (await response.json() as PageResponse<T>).data
   }
 
-  function signInWithGoogle() {
-    const returnTo = encodeURIComponent(window.location.href)
-    window.location.assign(`${apiOrigin}/auth/google/start?return_to=${returnTo}`)
+  async function signInWithGoogle() {
+    setIsSigningIn(true)
+    setAuthMessage(null)
+    try { await startGoogleLogin(apiOrigin) }
+    catch {
+      setAuthMessage('ไม่สามารถเริ่มเข้าสู่ระบบได้ กรุณาอนุญาตพื้นที่เก็บข้อมูลของเบราว์เซอร์แล้วลองใหม่')
+      setIsSigningIn(false)
+    }
   }
 
   async function signOut() {
     setIsSigningOut(true)
     try {
-      await fetch(`${apiOrigin}/auth/logout`, { method: 'POST', credentials: 'include' })
+      const response = await apiFetch(apiOrigin, '/auth/logout', { method: 'POST' })
+      if (!response.ok) throw new Error('LOGOUT_FAILED')
+      clearBrowserSession()
       setAccount(null)
       setHistoryItems([])
       setMyProducts([])
+      setAuthMessage(null)
+    } catch {
+      setAuthMessage('ยังออกจากระบบไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่')
     } finally {
       setIsSigningOut(false)
     }
@@ -233,7 +257,7 @@ function App() {
         setLookupMessage('พบสินค้าในข้อมูลที่เก็บไว้บนเครื่อง')
         return
       }
-      const response = await fetch(`${apiOrigin}/api/v1/products/upc/${encodeURIComponent(normalizedUpc)}`, { credentials: 'include' })
+      const response = await apiFetch(apiOrigin, `/api/v1/products/upc/${encodeURIComponent(normalizedUpc)}`)
       const payload = (await response.json()) as ProductResponse & ApiError
       if (!response.ok) {
         setLookupMessage(payload.error?.message ?? 'ค้นหาสินค้าไม่สำเร็จ')
@@ -263,8 +287,8 @@ function App() {
     }
     setIsSavingProduct(true)
     try {
-      const response = await fetch(`${apiOrigin}/api/v1/products`, {
-        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      const response = await apiFetch(apiOrigin, '/api/v1/products', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ upc, name: manualName, brand: manualBrand || null }),
       })
       const payload = (await response.json()) as ProductResponse & ApiError
@@ -334,7 +358,9 @@ function App() {
             <p className="account-label">เข้าสู่ระบบแล้ว</p><strong>{account.displayName ?? 'SmartCart user'}</strong>
             {account.primaryEmail ? <span>{account.primaryEmail}</span> : null}
             <button className="secondary-button" onClick={() => void signOut()} disabled={isSigningOut}>{isSigningOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}</button>
-          </> : <><p className="account-label">ยังไม่ได้เข้าสู่ระบบ</p><button className="google-button" onClick={signInWithGoogle}><span aria-hidden="true">G</span>เข้าสู่ระบบด้วย Google</button>{authMessage ? <small>{authMessage}</small> : null}</>}
+          </> : <><p className="account-label">ยังไม่ได้เข้าสู่ระบบ</p><button className="google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button></>}
+          {authMessage ? <small role="status">{authMessage}</small> : null}
+          {!googleEnabled && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
         </div>
         <nav className="view-tabs" aria-label="SmartCart sections">
           <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('purchase')}>Add Purchase</button>

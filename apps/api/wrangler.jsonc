@@ -10,6 +10,7 @@
   },
   "vars": {
     "APP_ORIGIN": "http://localhost:5173",
+    "APP_URL": "http://localhost:5173/",
     "API_ORIGIN": "http://localhost:8787",
     "ENVIRONMENT": "local"
   },
@@ -26,6 +27,7 @@
       "name": "smartcart-api-staging",
       "vars": {
         "APP_ORIGIN": "https://aumboonchu.github.io",
+        "APP_URL": "https://aumboonchu.github.io/um/",
         "API_ORIGIN": "https://smartcart-api-staging.jib-inventory.workers.dev",
         "ENVIRONMENT": "staging"
       },
@@ -45,6 +47,7 @@
       },
       "vars": {
         "APP_ORIGIN": "https://app.YOUR_DOMAIN",
+        "APP_URL": "https://app.YOUR_DOMAIN/",
         "API_ORIGIN": "https://api.YOUR_DOMAIN",
         "ENVIRONMENT": "production"
       },

@@ -5,11 +5,14 @@ export type AuthEnv = Env & {
   GOOGLE_CLIENT_SECRET?: string
 }
 
+type GoogleAuthEnv = AuthEnv & { GOOGLE_CLIENT_ID: string; GOOGLE_CLIENT_SECRET: string }
+
 type AuthTransaction = {
   id: string
   code_verifier: string
   nonce: string
   return_to: string
+  browser_code_challenge: string | null
 }
 
 type UserRow = {
@@ -39,6 +42,7 @@ const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'))
 const AUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000
+const LOGIN_CODE_TTL_MS = 60 * 1000
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 const textEncoder = new TextEncoder()
 
@@ -52,6 +56,10 @@ export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<
   }
 
   const url = new URL(request.url)
+  const browserChallenge = url.searchParams.get('app_code_challenge')
+  if (!browserChallenge || !/^[A-Za-z0-9_-]{43}$/.test(browserChallenge)) {
+    return redirectToApp(env, 'auth=failed')
+  }
   const state = randomToken(32)
   const codeVerifier = randomToken(48)
   const nonce = randomToken(32)
@@ -59,8 +67,8 @@ export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<
 
   await env.DB.prepare(
     `INSERT INTO auth_transactions
-      (id, provider, state_hash, code_verifier, nonce, return_to, expires_at)
-     VALUES (?, 'google', ?, ?, ?, ?, ?)`,
+      (id, provider, state_hash, code_verifier, nonce, return_to, expires_at, browser_code_challenge)
+     VALUES (?, 'google', ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       crypto.randomUUID(),
@@ -69,6 +77,7 @@ export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<
       nonce,
       safeReturnTo(url.searchParams.get('return_to'), env),
       expiresAt,
+      browserChallenge,
     )
     .run()
 
@@ -102,7 +111,7 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
   }
 
   const transaction = await env.DB.prepare(
-    `SELECT id, code_verifier, nonce, return_to
+    `SELECT id, code_verifier, nonce, return_to, browser_code_challenge
        FROM auth_transactions
       WHERE provider = 'google'
         AND state_hash = ?
@@ -112,7 +121,7 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
     .bind(await sha256Hex(state), new Date().toISOString())
     .first<AuthTransaction>()
 
-  if (!transaction) {
+  if (!transaction?.browser_code_challenge) {
     return redirectToApp(env, 'auth=failed')
   }
 
@@ -126,17 +135,72 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
     return redirectToApp(env, 'auth=failed')
   }
 
-  const tokens = await exchangeGoogleCode(code, transaction.code_verifier, env)
-  const profile = await verifyGoogleIdentity(tokens.id_token, transaction.nonce, env)
-  const account = await findOrCreateGoogleAccount(profile, env)
-  const sessionToken = await createSession(account.id, env)
-  const response = redirectToReturnTo(transaction.return_to, env)
-  response.headers.append('Set-Cookie', serializeSessionCookie(sessionToken, env))
-  return response
+  try {
+    const tokens = await exchangeGoogleCode(code, transaction.code_verifier, env)
+    const profile = await verifyGoogleIdentity(tokens.id_token, transaction.nonce, env)
+    const account = await findOrCreateGoogleAccount(profile, env)
+    const loginCode = randomToken(32)
+    await env.DB.prepare(
+      `INSERT INTO auth_login_codes (code_hash, user_id, code_challenge, expires_at)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(await sha256Hex(loginCode), account.id, transaction.browser_code_challenge,
+      new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString()).run()
+    const destination = new URL(safeReturnTo(transaction.return_to, env))
+    // Only a short-lived, PKCE-bound code travels in the fragment, never a session token.
+    destination.hash = new URLSearchParams({ login_code: loginCode }).toString()
+    return Response.redirect(destination.toString(), 302)
+  } catch {
+    return redirectToApp(env, 'auth=failed')
+  }
+}
+
+export function isGoogleLoginConfigured(env: AuthEnv): env is GoogleAuthEnv {
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+    && !env.GOOGLE_CLIENT_ID.startsWith('replace-') && !env.GOOGLE_CLIENT_SECRET.startsWith('replace-'))
+}
+
+export async function exchangeBrowserLogin(request: Request, env: AuthEnv): Promise<Response> {
+  if (request.headers.get('Origin') !== env.APP_ORIGIN) {
+    return Response.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, { status: 403 })
+  }
+  const invalid = () => Response.json({ error: { code: 'INVALID_LOGIN_CODE' } }, { status: 400 })
+  let input: unknown
+  try {
+    if (!request.headers.get('Content-Type')?.includes('application/json')) return invalid()
+    const reader = request.body?.getReader()
+    if (!reader) return invalid()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > 4096) { await reader.cancel(); return invalid() }
+      chunks.push(value)
+    }
+    const bytes = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+    input = JSON.parse(new TextDecoder().decode(bytes))
+  } catch { return invalid() }
+  if (typeof input !== 'object' || !input || !('code' in input) || !('codeVerifier' in input)
+    || typeof input.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(input.code)
+    || typeof input.codeVerifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.codeVerifier)) return invalid()
+
+  // Atomic consumption: concurrent exchanges can create at most one session.
+  const login = await env.DB.prepare(
+    `UPDATE auth_login_codes SET consumed_at = ?
+      WHERE code_hash = ? AND code_challenge = ? AND consumed_at IS NULL AND expires_at > ?
+      RETURNING user_id`,
+  ).bind(new Date().toISOString(), await sha256Hex(input.code), await sha256Base64Url(input.codeVerifier),
+    new Date().toISOString()).first<{ user_id: string }>()
+  if (!login) return invalid()
+  const sessionToken = await createSession(login.user_id, env)
+  return Response.json({ data: { sessionToken, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString() } })
 }
 
 export async function currentAccount(request: Request, env: AuthEnv): Promise<SmartCartAccount | null> {
-  const sessionToken = parseCookie(request.headers.get('Cookie'), 'smartcart_session')
+  const sessionToken = requestSessionToken(request)
   if (!sessionToken) return null
 
   const row = await env.DB.prepare(
@@ -155,7 +219,7 @@ export async function currentAccount(request: Request, env: AuthEnv): Promise<Sm
 }
 
 export async function revokeCurrentSession(request: Request, env: AuthEnv): Promise<void> {
-  const sessionToken = parseCookie(request.headers.get('Cookie'), 'smartcart_session')
+  const sessionToken = requestSessionToken(request)
   if (!sessionToken) return
 
   await env.DB.prepare(
@@ -177,7 +241,7 @@ export function isTrustedOrigin(request: Request, env: AuthEnv): boolean {
 async function exchangeGoogleCode(
   code: string,
   codeVerifier: string,
-  env: AuthEnv,
+  env: GoogleAuthEnv,
 ): Promise<GoogleTokenResponse> {
   const body = new URLSearchParams({
     code,
@@ -203,7 +267,7 @@ async function exchangeGoogleCode(
 async function verifyGoogleIdentity(
   idToken: string,
   expectedNonce: string,
-  env: AuthEnv,
+  env: GoogleAuthEnv,
 ): Promise<GoogleProfile> {
   const { payload } = await jwtVerify(idToken, GOOGLE_JWKS, {
     audience: env.GOOGLE_CLIENT_ID,
@@ -283,48 +347,32 @@ async function createSession(userId: string, env: AuthEnv): Promise<string> {
 }
 
 function redirectToApp(env: AuthEnv, query: string): Response {
-  const destination = new URL(env.APP_ORIGIN)
+  const destination = new URL(env.APP_URL)
   destination.search = query
   return Response.redirect(destination.toString(), 302)
 }
 
-function redirectToReturnTo(returnTo: string, env: AuthEnv): Response {
-  return Response.redirect(safeReturnTo(returnTo, env), 302)
-}
-
 function safeReturnTo(returnTo: string | null, env: AuthEnv): string {
-  if (!returnTo) return env.APP_ORIGIN
+  if (!returnTo) return env.APP_URL
   try {
     const candidate = new URL(returnTo)
-    if (candidate.origin === env.APP_ORIGIN) return candidate.toString()
+    const app = new URL(env.APP_URL)
+    if (candidate.origin === app.origin && candidate.pathname === app.pathname
+      && !candidate.username && !candidate.password) return candidate.toString()
   } catch {
     // Treat malformed return URLs as the default app destination.
   }
-  return env.APP_ORIGIN
-}
-
-function isGoogleLoginConfigured(env: AuthEnv): env is AuthEnv & {
-  GOOGLE_CLIENT_ID: string
-  GOOGLE_CLIENT_SECRET: string
-} {
-  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)
+  return env.APP_URL
 }
 
 function googleCallbackUrl(env: AuthEnv): string {
   return `${env.API_ORIGIN.replace(/\/$/, '')}/auth/google/callback`
 }
 
-function serializeSessionCookie(token: string, env: AuthEnv): string {
-  return [
-    `smartcart_session=${token}`,
-    'Path=/',
-    'HttpOnly',
-    secureCookieAttribute(env).trim(),
-    'SameSite=Lax',
-    `Max-Age=${SESSION_TTL_SECONDS}`,
-  ]
-    .filter(Boolean)
-    .join('; ')
+function requestSessionToken(request: Request): string | null {
+  const authorization = request.headers.get('Authorization')
+  if (authorization !== null) return /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(authorization)?.[1] ?? null
+  return parseCookie(request.headers.get('Cookie'), 'smartcart_session')
 }
 
 function secureCookieAttribute(env: AuthEnv): string {
