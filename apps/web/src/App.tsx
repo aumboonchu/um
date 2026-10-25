@@ -1,5 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { apiFetch, clearBrowserSession, finishGoogleLogin, startGoogleLogin } from './auth-client'
+import ImportFeedback from './ImportFeedback'
+import { requestBigcImport, validateBigcImportUrl, type BigcImportState } from './bigc-import'
 import {
   cacheProduct,
   findCachedProduct,
@@ -58,6 +60,9 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>('purchase')
   const [productInputMode, setProductInputMode] = useState<ProductInputMode>('bigc-link')
   const [bigcUrl, setBigcUrl] = useState('')
+  const [bigcImportState, setBigcImportState] = useState<BigcImportState>({ status: 'idle' })
+  const importSequence = useRef(0)
+  const importInFlight = useRef(false)
   const [upc, setUpc] = useState('')
   const [product, setProduct] = useState<Product | null>(null)
   const [lookupMessage, setLookupMessage] = useState<string | null>(null)
@@ -94,6 +99,7 @@ function App() {
   useEffect(() => {
     void loadAccount()
     void refreshPendingSyncCount()
+    return () => { importSequence.current += 1 }
   }, [])
 
   useEffect(() => {
@@ -238,6 +244,11 @@ function App() {
       setHistoryItems([])
       setMyProducts([])
       setAuthMessage(null)
+      resetBigcImport()
+      setProduct(null)
+      setLookupMessage(null)
+      setPurchaseMessage(null)
+      setShowManualEntry(false)
     } catch {
       setAuthMessage('ยังออกจากระบบไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่')
     } finally {
@@ -294,6 +305,7 @@ function App() {
   }
 
   function changeProductInputMode(mode: ProductInputMode) {
+    resetBigcImport()
     setProductInputMode(mode)
     setProduct(null)
     setLookupMessage(null)
@@ -309,52 +321,68 @@ function App() {
     setShowManualEntry(true)
   }
 
-  async function importBigcProduct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  function resetBigcImport() {
+    importSequence.current += 1
+    importInFlight.current = false
+    setBigcImportState({ status: 'idle' })
+    setIsLookingUp(false)
+  }
+
+  function changeBigcUrl(value: string) {
+    if (importInFlight.current) return
+    setBigcUrl(value)
+    setBigcImportState({ status: 'idle' })
     setProduct(null)
+    setPrice('')
+    setLookupMessage(null)
+    setPurchaseMessage(null)
+  }
+
+  async function importBigcProduct() {
+    // A ref prevents Enter/double taps from starting concurrent imports before React renders.
+    if (importInFlight.current) return
+    setProduct(null)
+    setPrice('')
     setPurchaseMessage(null)
     setShowManualEntry(false)
     setLookupMessage(null)
     if (!account) {
-      setLookupMessage('กรุณาเข้าสู่ระบบด้วย Google ก่อนนำเข้าลิงก์สินค้า')
+      setBigcImportState({ status: 'error', title: 'ยังไม่ได้เพิ่มสินค้า', message: 'กรุณาเข้าสู่ระบบด้วย Google ก่อนนำเข้าลิงก์สินค้า', code: 'LOGIN_REQUIRED', retryable: false })
       return
     }
     if (!navigator.onLine) {
-      setLookupMessage('การนำเข้าสินค้าจากลิงก์ Big C ต้องทำขณะออนไลน์')
+      setBigcImportState({ status: 'error', title: 'ยังไม่ได้เพิ่มสินค้า', message: 'ขณะนี้ออฟไลน์ ยังไม่ได้ส่งลิงก์ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่', code: 'OFFLINE', retryable: true })
       return
     }
     const value = bigcUrl.trim()
-    let url: URL
-    try { url = new URL(value) }
-    catch {
-      setLookupMessage('กรุณาวางลิงก์หน้าสินค้า Big C ที่ถูกต้อง')
+    const validationMessage = validateBigcImportUrl(value)
+    if (validationMessage) {
+      setBigcImportState({ status: 'error', title: 'ยังไม่ได้เพิ่มสินค้า', message: validationMessage, code: 'INVALID_BIGC_URL', retryable: false })
       return
     }
-    if (url.protocol !== 'https:' || url.hostname !== 'www.bigc.co.th' || url.port || url.username || url.password
-      || !/^(?:\/en)?\/product\/[^/]+\.\d+\/?$/.test(url.pathname)) {
-      setLookupMessage('ใช้ลิงก์หน้าสินค้า https://www.bigc.co.th/product/… เท่านั้น ไม่ใช่ลิงก์ค้นหา')
-      return
-    }
+    const sequence = ++importSequence.current
+    importInFlight.current = true
     setBigcUrl(value)
     setIsLookingUp(true)
+    setBigcImportState({ status: 'loading' })
     try {
-      const response = await apiFetch(apiOrigin, '/api/v1/products/import-bigc', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: value }),
-      })
-      const payload = await response.json() as ProductResponse & ApiError
-      if (!response.ok) {
-        setLookupMessage(payload.error?.message ?? 'ยังนำเข้าสินค้าจากลิงก์ Big C ไม่สำเร็จ')
+      const result = await requestBigcImport(value, (init) => apiFetch(apiOrigin, '/api/v1/products/import-bigc', init))
+      // Do not restore a stale product after logout, unmount, or a later request.
+      if (sequence !== importSequence.current) return
+      if (result.status !== 'success') {
+        setBigcImportState(result)
         return
       }
-      setProduct(payload.data)
-      setPrice(payload.data.sourcePriceMinor !== null ? (payload.data.sourcePriceMinor / 100).toFixed(2) : '')
-      await cacheSelectedProduct(payload.data)
-      setLookupMessage('บันทึกสินค้าเป็น SKU ใน SmartCart แล้ว ลิงก์เดิมจะใช้สินค้ารายการเดิม')
-    } catch {
-      setLookupMessage('เชื่อมต่อ API ไม่สำเร็จ กรุณาลองส่งลิงก์เดิมอีกครั้ง')
+      setProduct(result.product)
+      setPrice(result.product.sourcePriceMinor !== null ? (result.product.sourcePriceMinor / 100).toFixed(2) : '')
+      setBigcImportState({ status: 'success', product: { name: result.product.name, sku: result.product.sku } })
+      // D1 has confirmed the SKU. An unavailable local cache must not hide that success.
+      void cacheSelectedProduct(result.product)
     } finally {
-      setIsLookingUp(false)
+      if (sequence === importSequence.current) {
+        importInFlight.current = false
+        setIsLookingUp(false)
+      }
     }
   }
 
@@ -407,6 +435,7 @@ function App() {
     setPurchaseMessage(null)
     try {
       await queuePurchase({ productId: product.id, unitPriceMinor, quantity: parsedQuantity, purchasedAt: new Date().toISOString(), storeName: storeName.trim() || null, note: null })
+      setBigcImportState({ status: 'idle' })
       const persistenceGranted = await requestPersistentStorage()
       await refreshPendingSyncCount()
       if (!navigator.onLine) setPurchaseMessage('บันทึกรายการไว้บนเครื่องแล้ว จะซิงก์เมื่อกลับมาออนไลน์')
@@ -446,14 +475,15 @@ function App() {
           {!googleEnabled && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
         </div>
         <nav className="view-tabs" aria-label="SmartCart sections">
-          <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('purchase')}>Add Purchase</button>
-          <button className={activeView === 'history' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('history')}>ประวัติ</button>
-          <button className={activeView === 'products' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('products')}>สินค้าของฉัน</button>
+          <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('purchase')} disabled={isLookingUp}>Add Purchase</button>
+          <button className={activeView === 'history' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('history')} disabled={isLookingUp}>ประวัติ</button>
+          <button className={activeView === 'products' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('products')} disabled={isLookingUp}>สินค้าของฉัน</button>
         </nav>
 
         {activeView === 'purchase' ? <PurchaseView
-          inputMode={productInputMode} changeInputMode={changeProductInputMode} bigcUrl={bigcUrl} setBigcUrl={setBigcUrl}
-          importBigcProduct={importBigcProduct} canImport={Boolean(account) && isOnline}
+          inputMode={productInputMode} changeInputMode={changeProductInputMode} bigcUrl={bigcUrl} setBigcUrl={changeBigcUrl}
+          importBigcProduct={importBigcProduct} bigcImportState={bigcImportState} canImport={Boolean(account) && isOnline}
+          importUnavailableReason={!account ? 'เข้าสู่ระบบด้วย Google ก่อนเพิ่มสินค้า' : !isOnline ? 'ขณะนี้ออฟไลน์ เชื่อมต่ออินเทอร์เน็ตก่อนนำเข้าลิงก์' : null}
           upc={upc} setUpc={setUpc} product={product} lookupMessage={lookupMessage} isLookingUp={isLookingUp}
           showManualEntry={showManualEntry} manualName={manualName} setManualName={setManualName} manualBrand={manualBrand} setManualBrand={setManualBrand}
           isSavingProduct={isSavingProduct} lookupProduct={lookupProduct} saveManualProduct={saveManualProduct} beginManualEntry={beginManualEntry}
@@ -490,7 +520,7 @@ function App() {
 
 type PurchaseViewProps = {
   inputMode: ProductInputMode; changeInputMode: (mode: ProductInputMode) => void; bigcUrl: string; setBigcUrl: (value: string) => void
-  importBigcProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>; canImport: boolean
+  importBigcProduct: () => Promise<void>; bigcImportState: BigcImportState; canImport: boolean; importUnavailableReason: string | null
   upc: string; setUpc: (value: string) => void; product: Product | null; lookupMessage: string | null; isLookingUp: boolean
   showManualEntry: boolean; manualName: string; setManualName: (value: string) => void; manualBrand: string; setManualBrand: (value: string) => void
   isSavingProduct: boolean; lookupProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>; saveManualProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>
@@ -500,16 +530,20 @@ type PurchaseViewProps = {
 }
 
 function PurchaseView(props: PurchaseViewProps) {
+  const bigcInput = useRef<HTMLInputElement>(null)
   return <section className="lookup-panel" aria-labelledby="lookup-title">
     <h2 id="lookup-title">Add Purchase</h2>
+    <p className="import-steps">1. เพิ่มสินค้าเป็น SKU <span aria-hidden="true">→</span> 2. กรอกราคาและบันทึกรายการซื้อ</p>
     <div className="input-mode-switch" role="group" aria-label="วิธีเพิ่มสินค้า">
       <button className={props.inputMode === 'bigc-link' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'bigc-link'} onClick={() => props.changeInputMode('bigc-link')} disabled={props.isLookingUp || props.isSavingProduct}>ลิงก์ Big C</button>
       <button className={props.inputMode === 'upc' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'upc'} onClick={() => props.changeInputMode('upc')} disabled={props.isLookingUp || props.isSavingProduct}>UPC / เพิ่มเอง</button>
     </div>
-    {props.inputMode === 'bigc-link' ? <form className="lookup-form" onSubmit={(event) => void props.importBigcProduct(event)}>
+    {props.inputMode === 'bigc-link' ? <form className="lookup-form bigc-import-form" noValidate onSubmit={(event) => { event.preventDefault(); void props.importBigcProduct() }}>
       <label htmlFor="bigc-url">ลิงก์หน้าสินค้า Big C</label>
-      <div className="input-row"><input id="bigc-url" type="url" value={props.bigcUrl} onChange={(event) => props.setBigcUrl(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="https://www.bigc.co.th/product/…" maxLength={2048} required disabled={props.isLookingUp} aria-describedby="bigc-import-help" /><button className="primary-button" disabled={props.isLookingUp || !props.canImport}>{props.isLookingUp ? 'กำลังนำเข้า…' : 'นำเข้า SKU'}</button></div>
-      <p id="bigc-import-help" className="status-message">เข้าสู่ระบบและออนไลน์เพื่อส่งลิงก์ให้ระบบอ่านข้อมูล โดยไม่ต้องเปิด Big C หากเว็บไม่อนุญาตให้อ่าน ระบบจะแจ้งข้อผิดพลาดแทนการบันทึกข้อมูลที่ไม่ถูกต้อง</p>
+      <div className="input-row" aria-busy={props.isLookingUp}><input ref={bigcInput} id="bigc-url" type="url" value={props.bigcUrl} onChange={(event) => props.setBigcUrl(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="https://www.bigc.co.th/product/…" maxLength={2048} required disabled={props.isLookingUp} aria-describedby="bigc-import-help" aria-invalid={props.bigcImportState.status === 'error' && props.bigcImportState.code === 'INVALID_BIGC_URL' ? true : undefined} /><button className="primary-button" disabled={props.isLookingUp || !props.canImport}>{props.isLookingUp ? 'กำลังเพิ่มสินค้า…' : 'เพิ่มสินค้าเป็น SKU'}</button></div>
+      <ImportFeedback state={props.bigcImportState} onRetry={() => void props.importBigcProduct()} onEdit={() => bigcInput.current?.focus()} onManual={() => props.changeInputMode('upc')} canRetry={props.canImport && !props.isLookingUp} canManual={!props.isLookingUp} />
+      {props.importUnavailableReason ? <p className="import-prerequisite" role="status">{props.importUnavailableReason}</p> : null}
+      <p id="bigc-import-help" className="status-message import-help">ส่งลิงก์ให้ระบบอ่านข้อมูลโดยไม่ต้องเปิด Big C สินค้าจะถูกเพิ่มเมื่อระบบยืนยัน SKU สำเร็จเท่านั้น หากเว็บปิดกั้น ระบบจะแจ้งว่าไม่ได้เพิ่ม</p>
     </form> : <form className="lookup-form" onSubmit={(event) => void props.lookupProduct(event)}>
       <label htmlFor="upc">UPC / Barcode</label><div className="input-row"><input id="upc" value={props.upc} onChange={(event) => props.setUpc(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="เช่น 8851959129012" required disabled={props.isLookingUp} /><button className="primary-button" disabled={props.isLookingUp}>{props.isLookingUp ? 'กำลังค้น…' : 'ค้นหา'}</button></div>
       <button type="button" className="secondary-button manual-entry-toggle" onClick={props.beginManualEntry} disabled={props.isLookingUp || props.isSavingProduct || !props.canImport || !props.upc.replace(/\D/g, '')}>เพิ่มสินค้าจาก UPC เอง</button>
