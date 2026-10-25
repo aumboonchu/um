@@ -2,7 +2,10 @@ import { apiFetch } from './auth-client'
 
 export type CachedProduct = {
   id: string
-  upc: string
+  // Optional SKU fields keep existing offline records readable after upgrading.
+  sku?: string
+  upc: string | null
+  sourceProductId?: string | null
   name: string
   brand: string | null
   packageSize: string | null
@@ -47,8 +50,10 @@ export type SyncSummary = {
 }
 
 const DATABASE_NAME = 'smartcart-offline'
-const DATABASE_VERSION = 1
-const PRODUCTS_STORE = 'products'
+const DATABASE_VERSION = 2
+const LEGACY_PRODUCTS_STORE = 'products'
+const PRODUCTS_STORE = 'products-by-id'
+const UPC_INDEX = 'by-upc'
 const OPERATIONS_STORE = 'operations'
 const META_STORE = 'metadata'
 const CLIENT_ID_KEY = 'client-id'
@@ -62,7 +67,9 @@ export async function cacheProduct(product: CachedProduct): Promise<void> {
 
 export async function findCachedProduct(upc: string): Promise<CachedProduct | null> {
   const database = await openDatabase()
-  return (await readValue<CachedProduct>(database, PRODUCTS_STORE, upc)) ?? null
+  const request = database.transaction(PRODUCTS_STORE, 'readonly').objectStore(PRODUCTS_STORE).index(UPC_INDEX).get(upc)
+  const product = await requestResult<CachedProduct | undefined>(request)
+  return product ?? (await readValue<CachedProduct>(database, LEGACY_PRODUCTS_STORE, upc)) ?? null
 }
 
 export async function queuePurchase(payload: PurchasePayload): Promise<PendingOperation> {
@@ -131,14 +138,42 @@ function openDatabase(): Promise<IDBDatabase> {
   if (databasePromise) return databasePromise
   databasePromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
-    request.onerror = () => reject(request.error ?? new Error('INDEXEDDB_OPEN_FAILED'))
+    let abandoned = false
+    request.onerror = () => {
+      databasePromise = undefined
+      reject(request.error ?? new Error('INDEXEDDB_OPEN_FAILED'))
+    }
+    request.onblocked = () => {
+      abandoned = true
+      databasePromise = undefined
+      reject(new Error('INDEXEDDB_UPGRADE_BLOCKED'))
+    }
     request.onupgradeneeded = () => {
       const database = request.result
-      if (!database.objectStoreNames.contains(PRODUCTS_STORE)) database.createObjectStore(PRODUCTS_STORE, { keyPath: 'upc' })
+      if (!database.objectStoreNames.contains(LEGACY_PRODUCTS_STORE)) database.createObjectStore(LEGACY_PRODUCTS_STORE, { keyPath: 'upc' })
+      if (!database.objectStoreNames.contains(PRODUCTS_STORE)) {
+        const products = database.createObjectStore(PRODUCTS_STORE, { keyPath: 'id' })
+        // An absent/null UPC is not indexed. Link imports can therefore cache by ID
+        // without assigning a retailer product ID to a barcode or null IDB key.
+        products.createIndex(UPC_INDEX, 'upc', { unique: false })
+        const cursorRequest = request.transaction!.objectStore(LEGACY_PRODUCTS_STORE).openCursor()
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result
+          if (!cursor) return
+          const product = cursor.value as CachedProduct
+          if (typeof product.id === 'string' && product.id.length > 0) products.put(product)
+          cursor.continue()
+        }
+      }
       if (!database.objectStoreNames.contains(OPERATIONS_STORE)) database.createObjectStore(OPERATIONS_STORE, { keyPath: 'operationId' })
       if (!database.objectStoreNames.contains(META_STORE)) database.createObjectStore(META_STORE, { keyPath: 'key' })
     }
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      const database = request.result
+      if (abandoned) { database.close(); return }
+      database.onversionchange = () => { database.close(); databasePromise = undefined }
+      resolve(database)
+    }
   })
   return databasePromise
 }

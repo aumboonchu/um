@@ -5,12 +5,23 @@ SmartCart is a local-first PWA for recording purchases with UPC product lookup. 
 ## What is included
 
 - Google OpenID Connect login with PKCE, nonce, browser-bound one-use handoff codes, opaque bearer sessions, and D1-backed replay protection.
-- UPC-first product lookup: D1 cache first, then public Big C product data when available.
+- Link-first product import: paste an HTTPS Big C product URL to import a stable SKU; UPC lookup/manual entry remain available.
+- Big C product IDs, internal SKUs, and optional UPCs are separate. Repeated links use the D1 source mapping instead of fetching Big C again.
 - Offline-first purchase capture with IndexedDB, UUID idempotency, D1 sync, and a pending-sync indicator.
 - Purchase history and a per-user product library with search and cursor pagination.
 - GitHub Actions verification plus separate web and API deployment workflows.
 
 Apple Login is intentionally not implemented.
+
+## Add a product from a Big C link
+
+Sign in, select **ลิงก์ Big C**, paste a full product URL such as `https://www.bigc.co.th/product/<slug>.<product-id>`, and choose **นำเข้า SKU**. The API reads public structured data and stores the product and its source identity atomically. New linked products use `BIGC-<product-id>` as their internal SKU. If a verified barcode is absent, UPC stays null; a retailer SKU is never treated as a barcode. Purchase recording uses the product ID, so a missing UPC does not prevent a purchase.
+
+Only exact HTTPS `www.bigc.co.th` product links (including `/en/product/`) are accepted. Search URLs, short links, other hosts, credentials, nonstandard ports, external redirects, and redirects to another product are rejected. Query strings/fragments are removed before fetching or storing. A reference price includes its fetch timestamp and is not a guaranteed current price; confirm the actual purchase price.
+
+Migration `0004_product_skus.sql` renames the legacy unique UPC column to SKU, adds a nullable unique UPC column, copies the original barcodes, and adds stable source identity links without dropping product tables or breaking purchase references. Deploy the migration and the matching API together on staging before publishing the updated web app. The IndexedDB v2 upgrade adds an ID-keyed cache while preserving the legacy cache, queued operations, and metadata.
+
+Providing a link does not bypass Big C bot protection or grant redistribution rights. A direct live product-page probe on 2026-10-25 returned HTTP 403 with a Cloudflare Challenge; successful live extraction is not yet verified. On blocked, missing, or unverifiable source data, the API returns a clear error and creates no product. Tests use explicitly synthetic HTML fixtures, not evidence of a successful Big C live import. No browser service, CAPTCHA solver, paid plan, or additional API credential is configured by this change. Confirm appropriate source-data permissions before broader reuse.
 
 ## Local development
 

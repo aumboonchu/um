@@ -1,8 +1,10 @@
 import type { AuthEnv } from './auth'
+import { BigCLinkError, normalizeBigCProductUrl, readBigCProductLink, type BigCLinkCandidate } from './bigc-link'
 
 type ProductRow = {
   id: string
-  upc: string
+  sku: string
+  upc: string | null
   name: string
   brand: string | null
   package_size: string | null
@@ -10,6 +12,7 @@ type ProductRow = {
   category: string | null
   image_url: string | null
   source: string | null
+  source_product_id: string | null
   source_url: string | null
   source_price_minor: number | null
   regular_price_minor: number | null
@@ -31,7 +34,8 @@ type ProductCandidate = {
 
 export type Product = {
   id: string
-  upc: string
+  sku: string
+  upc: string | null
   name: string
   brand: string | null
   packageSize: string | null
@@ -39,6 +43,7 @@ export type Product = {
   category: string | null
   imageUrl: string | null
   source: 'smartcart' | 'bigc'
+  sourceProductId: string | null
   sourceUrl: string | null
   sourcePriceMinor: number | null
   regularPriceMinor: number | null
@@ -64,6 +69,67 @@ export class ManualProductInputError extends Error {
 const BIGC_SEARCH_ORIGIN = 'https://www.bigc.co.th'
 const BIGC_SEARCH_TIMEOUT_MS = 8_000
 const MAX_BIGC_DOCUMENT_BYTES = 512 * 1024
+
+export async function importBigCProductLink(request: Request, env: AuthEnv): Promise<Product> {
+  let input: unknown
+  try { input = await readJsonBody(request, 4096) } catch { throw new BigCLinkError('INVALID_IMPORT', 400) }
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || typeof (input as Record<string, unknown>).url !== 'string') throw new BigCLinkError('INVALID_IMPORT', 400)
+  const target = normalizeBigCProductUrl((input as { url: string }).url)
+  const existing = await findByBigCId(target.sourceProductId, env)
+  if (existing) return existing
+
+  const candidate = await readBigCProductLink(target.url)
+  const matchedUpc = candidate.upc ? await findProduct(candidate.upc, env) : null
+  try {
+    await insertLinkedProduct(candidate, matchedUpc?.id ?? null, env)
+  } catch (error) {
+    // Unique source identity plus the transactional batch prevent race-created duplicates/orphans.
+    const concurrent = await findByBigCId(target.sourceProductId, env)
+    if (concurrent) return concurrent
+    const concurrentUpc = candidate.upc ? await findProduct(candidate.upc, env) : null
+    if (!matchedUpc && concurrentUpc) {
+      try { await insertLinkedProduct(candidate, concurrentUpc.id, env) } catch {
+        const linked = await findByBigCId(target.sourceProductId, env)
+        if (linked) return linked
+        throw error
+      }
+    } else { throw error }
+  }
+  const imported = await findByBigCId(target.sourceProductId, env)
+  if (!imported) throw new Error('Imported Big C SKU could not be loaded')
+  return imported
+}
+
+async function findByBigCId(sourceId: string, env: AuthEnv): Promise<Product | null> {
+  const link = await env.DB.prepare(
+    `SELECT product_id FROM product_source_links WHERE source = 'bigc' AND source_product_id = ? LIMIT 1`,
+  ).bind(sourceId).first<{ product_id: string }>()
+  return link ? findProductById(link.product_id, env) : null
+}
+
+async function insertLinkedProduct(candidate: BigCLinkCandidate, existingId: string | null, env: AuthEnv): Promise<void> {
+  const id = existingId ?? crypto.randomUUID()
+  const now = new Date().toISOString()
+  const statements: D1PreparedStatement[] = []
+  if (!existingId) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO products (id, sku, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(id, `BIGC-${candidate.sourceProductId}`, candidate.upc, candidate.name, candidate.brand,
+      candidate.packageSize, candidate.unit, candidate.category, candidate.imageUrl, now, now))
+  }
+  statements.push(env.DB.prepare(
+    `INSERT INTO product_source_links (source, source_product_id, product_id, source_url) VALUES ('bigc', ?, ?, ?)`,
+  ).bind(candidate.sourceProductId, id, candidate.sourceUrl))
+  statements.push(env.DB.prepare(
+    `INSERT INTO product_source_snapshots (id, product_id, source, source_product_id, source_url,
+      source_price_minor, regular_price_minor, availability, fetched_at)
+     VALUES (?, ?, 'bigc', ?, ?, ?, ?, 'unknown', ?)`,
+  ).bind(crypto.randomUUID(), id, candidate.sourceProductId, candidate.sourceUrl,
+    candidate.sourcePriceMinor, candidate.regularPriceMinor, now))
+  await env.DB.batch(statements)
+}
 
 export async function lookupProductByUpc(upc: string, env: AuthEnv): Promise<Product> {
   if (!isValidUpc(upc)) {
@@ -100,10 +166,10 @@ export async function createManualProduct(request: Request, env: AuthEnv): Promi
   try {
     await env.DB.prepare(
       `INSERT INTO products
-        (id, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+        (id, sku, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
     )
-      .bind(crypto.randomUUID(), input.upc, input.name, input.brand, now, now)
+      .bind(crypto.randomUUID(), `UPC-${input.upc}`, input.upc, input.name, input.brand, now, now)
       .run()
   } catch (error) {
     const concurrentProduct = await findProduct(input.upc, env)
@@ -129,9 +195,17 @@ export function parseBigCProductDocument(document: string, upc: string, searchUr
 }
 
 async function findProduct(upc: string, env: AuthEnv): Promise<Product | null> {
+  return findProductWhere('p.upc', upc, env)
+}
+
+async function findProductById(id: string, env: AuthEnv): Promise<Product | null> {
+  return findProductWhere('p.id', id, env)
+}
+
+async function findProductWhere(column: 'p.id' | 'p.upc', value: string, env: AuthEnv): Promise<Product | null> {
   const row = await env.DB.prepare(
-    `SELECT p.id, p.upc, p.name, p.brand, p.package_size, p.unit, p.category, p.image_url,
-            s.source, s.source_url, s.source_price_minor, s.regular_price_minor, s.fetched_at
+    `SELECT p.id, p.sku, p.upc, p.name, p.brand, p.package_size, p.unit, p.category, p.image_url,
+            s.source, s.source_product_id, s.source_url, s.source_price_minor, s.regular_price_minor, s.fetched_at
        FROM products p
        LEFT JOIN product_source_snapshots s ON s.id = (
          SELECT id FROM product_source_snapshots
@@ -139,10 +213,10 @@ async function findProduct(upc: string, env: AuthEnv): Promise<Product | null> {
           ORDER BY fetched_at DESC, id DESC
           LIMIT 1
        )
-      WHERE p.upc = ?
+      WHERE ${column} = ?
       LIMIT 1`,
   )
-    .bind(upc)
+    .bind(value)
     .first<ProductRow>()
 
   return row ? toProduct(row) : null
@@ -191,10 +265,11 @@ async function insertImportedProduct(upc: string, candidate: ProductCandidate, e
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO products
-        (id, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, sku, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       productId,
+      `UPC-${upc}`,
       upc,
       candidate.name,
       candidate.brand,
@@ -225,6 +300,7 @@ async function insertImportedProduct(upc: string, candidate: ProductCandidate, e
 function toProduct(row: ProductRow): Product {
   return {
     id: row.id,
+    sku: row.sku,
     upc: row.upc,
     name: row.name,
     brand: row.brand,
@@ -233,6 +309,7 @@ function toProduct(row: ProductRow): Product {
     category: row.category,
     imageUrl: row.image_url,
     source: row.source === 'bigc' ? 'bigc' : 'smartcart',
+    sourceProductId: row.source_product_id,
     sourceUrl: row.source_url,
     sourcePriceMinor: row.source_price_minor,
     regularPriceMinor: row.regular_price_minor,
@@ -349,7 +426,7 @@ function findProductCandidate(value: unknown, upc: string, searchUrl: string, de
 }
 
 function hasMatchingUpc(record: Record<string, unknown>, upc: string): boolean {
-  const keys = ['gtin', 'gtin8', 'gtin12', 'gtin13', 'gtin14', 'barcode', 'upc', 'sku', 'productCode']
+  const keys = ['gtin', 'gtin8', 'gtin12', 'gtin13', 'gtin14', 'barcode', 'upc']
   return keys.some((key) => textValue(record[key]) === upc)
 }
 

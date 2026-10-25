@@ -158,6 +158,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .lookup-panel h2, .product-result h3 { margin: 0; }
 
 .lookup-form, .manual-form, .purchase-form { display: grid; gap: 10px; }
+.input-mode-switch { display: flex; flex-wrap: wrap; gap: 8px; }
+.manual-entry-toggle { justify-self: start; }
+.product-result > div, .history-card > div, .library-card > div { min-width: 0; overflow-wrap: anywhere; }
 
 .manual-form {
   padding: 14px;

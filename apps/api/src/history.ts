@@ -4,7 +4,8 @@ type PurchaseRow = {
   id: string
   product_id: string
   product_name: string
-  product_upc: string
+  product_sku: string
+  product_upc: string | null
   product_brand: string | null
   image_url: string | null
   store_name: string | null
@@ -17,7 +18,8 @@ type PurchaseRow = {
 
 type ProductRow = {
   id: string
-  upc: string
+  sku: string
+  upc: string | null
   name: string
   brand: string | null
   image_url: string | null
@@ -32,7 +34,8 @@ export type PurchaseHistoryItem = {
   id: string
   productId: string
   productName: string
-  productUpc: string
+  productSku: string
+  productUpc: string | null
   productBrand: string | null
   imageUrl: string | null
   storeName: string | null
@@ -45,7 +48,8 @@ export type PurchaseHistoryItem = {
 
 export type MyProductItem = {
   id: string
-  upc: string
+  sku: string
+  upc: string | null
   name: string
   brand: string | null
   imageUrl: string | null
@@ -75,8 +79,8 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
 
   if (search) {
     const like = `%${escapeLike(search)}%`
-    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR COALESCE(stores.name, '') LIKE ? ESCAPE '!')")
-    bindings.push(like, like, like)
+    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(stores.name, '') LIKE ? ESCAPE '!')")
+    bindings.push(like, like, like, like)
   }
   if (cursor) {
     conditions.push('(p.purchased_at < ? OR (p.purchased_at = ? AND p.id < ?))')
@@ -85,7 +89,7 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
   bindings.push(limit + 1)
 
   const result = await env.DB.prepare(
-    `SELECT p.id, p.product_id, products.name AS product_name, products.upc AS product_upc,
+    `SELECT p.id, p.product_id, products.name AS product_name, products.sku AS product_sku, products.upc AS product_upc,
             products.brand AS product_brand, products.image_url, stores.name AS store_name,
             p.unit_price_minor, p.quantity, p.total_minor, p.purchased_at, p.note
        FROM purchases p
@@ -112,8 +116,8 @@ export async function listMyProducts(url: URL, userId: string, env: AuthEnv): Pr
 
   if (search) {
     const like = `%${escapeLike(search)}%`
-    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR COALESCE(products.brand, '') LIKE ? ESCAPE '!')")
-    bindings.push(like, like, like)
+    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(products.brand, '') LIKE ? ESCAPE '!')")
+    bindings.push(like, like, like, like)
   }
   const having: string[] = []
   if (cursor) {
@@ -123,14 +127,14 @@ export async function listMyProducts(url: URL, userId: string, env: AuthEnv): Pr
   bindings.push(limit + 1)
 
   const result = await env.DB.prepare(
-    `SELECT products.id, products.upc, products.name, products.brand, products.image_url,
+    `SELECT products.id, products.sku, products.upc, products.name, products.brand, products.image_url,
             COUNT(purchases.id) AS purchase_count,
             SUM(purchases.total_minor) AS total_spent_minor,
             MAX(purchases.purchased_at) AS last_purchased_at
        FROM purchases
        INNER JOIN products ON products.id = purchases.product_id
       WHERE ${conditions.join(' AND ')}
-      GROUP BY products.id, products.upc, products.name, products.brand, products.image_url
+      GROUP BY products.id, products.sku, products.upc, products.name, products.brand, products.image_url
       ${having.length ? `HAVING ${having.join(' AND ')}` : ''}
       ORDER BY last_purchased_at DESC, products.id DESC
       LIMIT ?`,
@@ -183,6 +187,7 @@ function toPurchaseHistoryItem(row: PurchaseRow): PurchaseHistoryItem {
     id: row.id,
     productId: row.product_id,
     productName: row.product_name,
+    productSku: row.product_sku,
     productUpc: row.product_upc,
     productBrand: row.product_brand,
     imageUrl: row.image_url,
@@ -198,6 +203,7 @@ function toPurchaseHistoryItem(row: PurchaseRow): PurchaseHistoryItem {
 function toMyProductItem(row: ProductRow): MyProductItem {
   return {
     id: row.id,
+    sku: row.sku,
     upc: row.upc,
     name: row.name,
     brand: row.brand,

@@ -16,12 +16,14 @@ type Product = CachedProduct
 type ProductResponse = { data: Product }
 type ApiError = { error?: { message?: string; manualEntry?: boolean } }
 type AppView = 'purchase' | 'history' | 'products'
+type ProductInputMode = 'bigc-link' | 'upc'
 
 type PurchaseHistoryItem = {
   id: string
   productId: string
   productName: string
-  productUpc: string
+  productSku: string
+  productUpc: string | null
   productBrand: string | null
   imageUrl: string | null
   storeName: string | null
@@ -34,7 +36,8 @@ type PurchaseHistoryItem = {
 
 type MyProductItem = {
   id: string
-  upc: string
+  sku: string
+  upc: string | null
   name: string
   brand: string | null
   imageUrl: string | null
@@ -52,6 +55,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [activeView, setActiveView] = useState<AppView>('purchase')
+  const [productInputMode, setProductInputMode] = useState<ProductInputMode>('bigc-link')
+  const [bigcUrl, setBigcUrl] = useState('')
   const [upc, setUpc] = useState('')
   const [product, setProduct] = useState<Product | null>(null)
   const [lookupMessage, setLookupMessage] = useState<string | null>(null)
@@ -253,7 +258,7 @@ function App() {
           return
         }
         setProduct(cachedProduct)
-        setPrice(cachedProduct.sourcePriceMinor ? (cachedProduct.sourcePriceMinor / 100).toFixed(2) : '')
+        setPrice(cachedProduct.sourcePriceMinor !== null ? (cachedProduct.sourcePriceMinor / 100).toFixed(2) : '')
         setLookupMessage('พบสินค้าในข้อมูลที่เก็บไว้บนเครื่อง')
         return
       }
@@ -265,11 +270,81 @@ function App() {
         return
       }
       setProduct(payload.data)
-      setPrice(payload.data.sourcePriceMinor ? (payload.data.sourcePriceMinor / 100).toFixed(2) : '')
-      await cacheProduct(payload.data)
+      setPrice(payload.data.sourcePriceMinor !== null ? (payload.data.sourcePriceMinor / 100).toFixed(2) : '')
+      await cacheSelectedProduct(payload.data)
       setLookupMessage(payload.data.source === 'bigc' ? 'นำเข้าสินค้าจาก Big C และบันทึกลงฐานข้อมูลแล้ว' : 'พบสินค้าในฐานข้อมูล SmartCart')
     } catch {
       setLookupMessage('เชื่อมต่อ API ไม่สำเร็จ กรุณาลองใหม่')
+    } finally {
+      setIsLookingUp(false)
+    }
+  }
+
+  async function cacheSelectedProduct(selectedProduct: Product) {
+    try { await cacheProduct(selectedProduct) }
+    catch { setSyncMessage('สินค้าถูกบันทึกในระบบแล้ว แต่ยังเก็บ cache บนอุปกรณ์นี้ไม่สำเร็จ') }
+  }
+
+  function changeProductInputMode(mode: ProductInputMode) {
+    setProductInputMode(mode)
+    setProduct(null)
+    setLookupMessage(null)
+    setPurchaseMessage(null)
+    setShowManualEntry(false)
+  }
+
+  function beginManualEntry() {
+    setUpc(upc.replace(/\D/g, ''))
+    setProduct(null)
+    setLookupMessage(null)
+    setPurchaseMessage(null)
+    setShowManualEntry(true)
+  }
+
+  async function importBigcProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setProduct(null)
+    setPurchaseMessage(null)
+    setShowManualEntry(false)
+    setLookupMessage(null)
+    if (!account) {
+      setLookupMessage('กรุณาเข้าสู่ระบบด้วย Google ก่อนนำเข้าลิงก์สินค้า')
+      return
+    }
+    if (!navigator.onLine) {
+      setLookupMessage('การนำเข้าสินค้าจากลิงก์ Big C ต้องทำขณะออนไลน์')
+      return
+    }
+    const value = bigcUrl.trim()
+    let url: URL
+    try { url = new URL(value) }
+    catch {
+      setLookupMessage('กรุณาวางลิงก์หน้าสินค้า Big C ที่ถูกต้อง')
+      return
+    }
+    if (url.protocol !== 'https:' || url.hostname !== 'www.bigc.co.th' || url.port || url.username || url.password
+      || !/^(?:\/en)?\/product\/[^/]+\.\d+\/?$/.test(url.pathname)) {
+      setLookupMessage('ใช้ลิงก์หน้าสินค้า https://www.bigc.co.th/product/… เท่านั้น ไม่ใช่ลิงก์ค้นหา')
+      return
+    }
+    setBigcUrl(value)
+    setIsLookingUp(true)
+    try {
+      const response = await apiFetch(apiOrigin, '/api/v1/products/import-bigc', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: value }),
+      })
+      const payload = await response.json() as ProductResponse & ApiError
+      if (!response.ok) {
+        setLookupMessage(payload.error?.message ?? 'ยังนำเข้าสินค้าจากลิงก์ Big C ไม่สำเร็จ')
+        return
+      }
+      setProduct(payload.data)
+      setPrice(payload.data.sourcePriceMinor !== null ? (payload.data.sourcePriceMinor / 100).toFixed(2) : '')
+      await cacheSelectedProduct(payload.data)
+      setLookupMessage('บันทึกสินค้าเป็น SKU ใน SmartCart แล้ว ลิงก์เดิมจะใช้สินค้ารายการเดิม')
+    } catch {
+      setLookupMessage('เชื่อมต่อ API ไม่สำเร็จ กรุณาลองส่งลิงก์เดิมอีกครั้ง')
     } finally {
       setIsLookingUp(false)
     }
@@ -297,7 +372,7 @@ function App() {
         return
       }
       setProduct(payload.data)
-      await cacheProduct(payload.data)
+      await cacheSelectedProduct(payload.data)
       setShowManualEntry(false)
       setLookupMessage('เพิ่มสินค้าเองลงฐานข้อมูล SmartCart แล้ว')
     } catch {
@@ -345,7 +420,7 @@ function App() {
         <div>
           <p className="eyebrow">SmartCart PWA</p>
           <h1 id="app-title">บันทึกรายการซื้อได้ทุกที่</h1>
-          <p>ค้นหาด้วย UPC ก่อน แล้ว SmartCart จะใช้ข้อมูลในระบบ หรือขอข้อมูลจาก Big C เมื่อพบรหัสใหม่</p>
+          <p>วางลิงก์หน้าสินค้า Big C เพื่อนำเข้าเป็น SKU ของ SmartCart หรือค้นสินค้าที่บันทึกไว้ด้วย UPC</p>
         </div>
         <div className="sync-banner" aria-live="polite">
           <span className={isOnline ? 'online-indicator' : 'offline-indicator'}>{isOnline ? 'ออนไลน์' : 'ออฟไลน์'}</span>
@@ -369,16 +444,18 @@ function App() {
         </nav>
 
         {activeView === 'purchase' ? <PurchaseView
+          inputMode={productInputMode} changeInputMode={changeProductInputMode} bigcUrl={bigcUrl} setBigcUrl={setBigcUrl}
+          importBigcProduct={importBigcProduct} canImport={Boolean(account) && isOnline}
           upc={upc} setUpc={setUpc} product={product} lookupMessage={lookupMessage} isLookingUp={isLookingUp}
           showManualEntry={showManualEntry} manualName={manualName} setManualName={setManualName} manualBrand={manualBrand} setManualBrand={setManualBrand}
-          isSavingProduct={isSavingProduct} lookupProduct={lookupProduct} saveManualProduct={saveManualProduct}
+          isSavingProduct={isSavingProduct} lookupProduct={lookupProduct} saveManualProduct={saveManualProduct} beginManualEntry={beginManualEntry}
           quantity={quantity} setQuantity={setQuantity} price={price} setPrice={setPrice} storeName={storeName} setStoreName={setStoreName}
           isSavingPurchase={isSavingPurchase} purchaseMessage={purchaseMessage} savePurchase={savePurchase}
         /> : null}
 
         {activeView === 'history' ? <section className="content-panel" aria-labelledby="history-title">
           <h2 id="history-title">ประวัติรายการซื้อ</h2>
-          <SearchForm value={historySearch} setValue={setHistorySearch} onSubmit={() => { setHistoryQuery(historySearch); void loadHistory(true, historySearch) }} placeholder="ค้นหาสินค้า, UPC หรือร้านค้า" />
+          <SearchForm value={historySearch} setValue={setHistorySearch} onSubmit={() => { setHistoryQuery(historySearch); void loadHistory(true, historySearch) }} placeholder="ค้นหาสินค้า, SKU, UPC หรือร้านค้า" />
           {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูประวัติของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดประวัติจาก D1</p> : null}
           {historyMessage ? <p className="status-message">{historyMessage}</p> : null}
           <div className="history-list">{historyItems.map((item) => <HistoryCard key={item.id} item={item} />)}</div>
@@ -390,7 +467,7 @@ function App() {
         {activeView === 'products' ? <section className="content-panel" aria-labelledby="products-title">
           <h2 id="products-title">สินค้าของฉัน</h2>
           <p className="status-message">สินค้าที่คุณเคยบันทึกรายการซื้อ พร้อมยอดใช้จ่ายสะสม</p>
-          <SearchForm value={productsSearch} setValue={setProductsSearch} onSubmit={() => { setProductsQuery(productsSearch); void loadMyProducts(true, productsSearch) }} placeholder="ค้นหาชื่อสินค้า, UPC หรือแบรนด์" />
+          <SearchForm value={productsSearch} setValue={setProductsSearch} onSubmit={() => { setProductsQuery(productsSearch); void loadMyProducts(true, productsSearch) }} placeholder="ค้นหาชื่อสินค้า, SKU, UPC หรือแบรนด์" />
           {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูคลังสินค้าของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดคลังสินค้าจาก D1</p> : null}
           {productsMessage ? <p className="status-message">{productsMessage}</p> : null}
           <div className="product-library">{myProducts.map((item) => <MyProductCard key={item.id} item={item} />)}</div>
@@ -404,9 +481,12 @@ function App() {
 }
 
 type PurchaseViewProps = {
+  inputMode: ProductInputMode; changeInputMode: (mode: ProductInputMode) => void; bigcUrl: string; setBigcUrl: (value: string) => void
+  importBigcProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>; canImport: boolean
   upc: string; setUpc: (value: string) => void; product: Product | null; lookupMessage: string | null; isLookingUp: boolean
   showManualEntry: boolean; manualName: string; setManualName: (value: string) => void; manualBrand: string; setManualBrand: (value: string) => void
   isSavingProduct: boolean; lookupProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>; saveManualProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>
+  beginManualEntry: () => void
   quantity: string; setQuantity: (value: string) => void; price: string; setPrice: (value: string) => void; storeName: string; setStoreName: (value: string) => void
   isSavingPurchase: boolean; purchaseMessage: string | null; savePurchase: (event: FormEvent<HTMLFormElement>) => Promise<void>
 }
@@ -414,12 +494,21 @@ type PurchaseViewProps = {
 function PurchaseView(props: PurchaseViewProps) {
   return <section className="lookup-panel" aria-labelledby="lookup-title">
     <h2 id="lookup-title">Add Purchase</h2>
-    <form className="lookup-form" onSubmit={(event) => void props.lookupProduct(event)}>
-      <label htmlFor="upc">UPC / Barcode</label><div className="input-row"><input id="upc" value={props.upc} onChange={(event) => props.setUpc(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="เช่น 8851959129012" required /><button className="primary-button" disabled={props.isLookingUp}>{props.isLookingUp ? 'กำลังค้น…' : 'ค้นหา'}</button></div>
-    </form>
-    {props.lookupMessage ? <p className="status-message">{props.lookupMessage}</p> : null}
+    <div className="input-mode-switch" role="group" aria-label="วิธีเพิ่มสินค้า">
+      <button className={props.inputMode === 'bigc-link' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'bigc-link'} onClick={() => props.changeInputMode('bigc-link')} disabled={props.isLookingUp || props.isSavingProduct}>ลิงก์ Big C</button>
+      <button className={props.inputMode === 'upc' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'upc'} onClick={() => props.changeInputMode('upc')} disabled={props.isLookingUp || props.isSavingProduct}>UPC / เพิ่มเอง</button>
+    </div>
+    {props.inputMode === 'bigc-link' ? <form className="lookup-form" onSubmit={(event) => void props.importBigcProduct(event)}>
+      <label htmlFor="bigc-url">ลิงก์หน้าสินค้า Big C</label>
+      <div className="input-row"><input id="bigc-url" type="url" value={props.bigcUrl} onChange={(event) => props.setBigcUrl(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="https://www.bigc.co.th/product/…" maxLength={2048} required disabled={props.isLookingUp} aria-describedby="bigc-import-help" /><button className="primary-button" disabled={props.isLookingUp || !props.canImport}>{props.isLookingUp ? 'กำลังนำเข้า…' : 'นำเข้า SKU'}</button></div>
+      <p id="bigc-import-help" className="status-message">เข้าสู่ระบบและออนไลน์เพื่อส่งลิงก์ให้ระบบอ่านข้อมูล โดยไม่ต้องเปิด Big C หากเว็บไม่อนุญาตให้อ่าน ระบบจะแจ้งข้อผิดพลาดแทนการบันทึกข้อมูลที่ไม่ถูกต้อง</p>
+    </form> : <form className="lookup-form" onSubmit={(event) => void props.lookupProduct(event)}>
+      <label htmlFor="upc">UPC / Barcode</label><div className="input-row"><input id="upc" value={props.upc} onChange={(event) => props.setUpc(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="เช่น 8851959129012" required disabled={props.isLookingUp} /><button className="primary-button" disabled={props.isLookingUp}>{props.isLookingUp ? 'กำลังค้น…' : 'ค้นหา'}</button></div>
+      <button type="button" className="secondary-button manual-entry-toggle" onClick={props.beginManualEntry} disabled={props.isLookingUp || props.isSavingProduct || !props.canImport || !props.upc.replace(/\D/g, '')}>เพิ่มสินค้าจาก UPC เอง</button>
+    </form>}
+    {props.lookupMessage ? <p className="status-message" role="status">{props.lookupMessage}</p> : null}
     {props.showManualEntry ? <form className="manual-form" onSubmit={(event) => void props.saveManualProduct(event)}><strong>เพิ่มสินค้าเอง</strong><label>ชื่อสินค้า<input value={props.manualName} onChange={(event) => props.setManualName(event.target.value)} maxLength={200} required /></label><label>แบรนด์ (ไม่บังคับ)<input value={props.manualBrand} onChange={(event) => props.setManualBrand(event.target.value)} maxLength={100} /></label><button className="secondary-button" disabled={props.isSavingProduct}>{props.isSavingProduct ? 'กำลังเพิ่ม…' : 'บันทึกสินค้าเอง'}</button></form> : null}
-    {props.product ? <div className="product-result">{props.product.imageUrl ? <img src={props.product.imageUrl} alt="" /> : <div className="image-placeholder" aria-hidden="true">สินค้า</div>}<div><p className="source-badge">{props.product.source === 'bigc' ? 'Big C import' : 'SmartCart database'}</p><h3>{props.product.name}</h3><p>{[props.product.brand, props.product.packageSize, props.product.upc].filter(Boolean).join(' · ')}</p>{props.product.sourcePriceMinor ? <strong>{formatBaht(props.product.sourcePriceMinor)} ราคาอ้างอิง</strong> : null}</div></div> : null}
+    {props.product ? <div className="product-result">{props.product.imageUrl ? <img src={props.product.imageUrl} alt="" /> : <div className="image-placeholder" aria-hidden="true">สินค้า</div>}<div><p className="source-badge">{props.product.source === 'bigc' ? 'Big C import' : 'SmartCart database'}</p><h3>{props.product.name}</h3><p>{[props.product.brand, props.product.packageSize].filter(Boolean).join(' · ')}</p><p>SKU: {props.product.sku ?? props.product.id}</p><p>{props.product.upc ? `UPC / Barcode: ${props.product.upc}` : 'ยังไม่มี UPC / Barcode — รหัสสินค้า Big C ไม่ใช่บาร์โค้ด'}</p>{props.product.sourceProductId ? <p>รหัสสินค้า Big C: {props.product.sourceProductId}</p> : null}{props.product.sourcePriceMinor !== null ? <p><strong>{formatBaht(props.product.sourcePriceMinor)} ราคาอ้างอิง</strong><br /><small>ไม่ใช่การรับประกันราคาปัจจุบัน กรุณายืนยันราคาที่ซื้อจริง</small></p> : null}{props.product.fetchedAt ? <p><small>อ่านข้อมูลเมื่อ {formatDate(props.product.fetchedAt)}</small></p> : null}</div></div> : null}
     {props.product ? <form className="purchase-form" onSubmit={(event) => void props.savePurchase(event)}><label>ราคาที่ซื้อจริง (บาท)<input value={props.price} onChange={(event) => props.setPrice(event.target.value)} inputMode="decimal" required /></label><label>จำนวน<input value={props.quantity} onChange={(event) => props.setQuantity(event.target.value)} inputMode="decimal" required /></label><label className="full-width">ร้านค้า (ไม่บังคับ)<input value={props.storeName} onChange={(event) => props.setStoreName(event.target.value)} maxLength={80} /></label><button className="primary-button full-width" disabled={props.isSavingPurchase}>{props.isSavingPurchase ? 'กำลังบันทึก…' : 'บันทึกรายการซื้อ'}</button>{props.purchaseMessage ? <p className="status-message full-width">{props.purchaseMessage}</p> : null}</form> : null}
   </section>
 }
@@ -431,7 +520,7 @@ function SearchForm({ value, setValue, onSubmit, placeholder }: { value: string;
 function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
   return <article className="history-card">
     {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
-    <div><strong>{item.productName}</strong><p>{[item.productBrand, item.productUpc, item.storeName].filter(Boolean).join(' · ')}</p><small>{formatDate(item.purchasedAt)} · {item.quantity} ชิ้น × {formatBaht(item.unitPriceMinor)}</small></div>
+    <div><strong>{item.productName}</strong><p>{[item.productBrand, `SKU: ${item.productSku ?? item.productId}`, item.productUpc ? `UPC: ${item.productUpc}` : null, item.storeName].filter(Boolean).join(' · ')}</p><small>{formatDate(item.purchasedAt)} · {item.quantity} ชิ้น × {formatBaht(item.unitPriceMinor)}</small></div>
     <strong className="history-total">{formatBaht(item.totalMinor)}</strong>
   </article>
 }
@@ -439,7 +528,7 @@ function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
 function MyProductCard({ item }: { item: MyProductItem }) {
   return <article className="library-card">
     {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
-    <div><strong>{item.name}</strong><p>{[item.brand, item.upc].filter(Boolean).join(' · ')}</p><small>ซื้อ {item.purchaseCount} ครั้ง · ล่าสุด {formatDate(item.lastPurchasedAt)}</small></div>
+    <div><strong>{item.name}</strong><p>{[item.brand, `SKU: ${item.sku ?? item.id}`, item.upc ? `UPC: ${item.upc}` : null].filter(Boolean).join(' · ')}</p><small>ซื้อ {item.purchaseCount} ครั้ง · ล่าสุด {formatDate(item.lastPurchasedAt)}</small></div>
     <strong className="history-total">{formatBaht(item.totalSpentMinor)}</strong>
   </article>
 }

@@ -12,7 +12,8 @@ import {
   startGoogleLogin,
   type AuthEnv,
 } from './auth'
-import { ManualProductInputError, ProductLookupError, createManualProduct, lookupProductByUpc } from './products'
+import { ManualProductInputError, ProductLookupError, createManualProduct, importBigCProductLink, lookupProductByUpc } from './products'
+import { BigCLinkError } from './bigc-link'
 import { PurchaseInputError, PurchaseProductNotFoundError, createPurchase } from './purchases'
 import { SyncInputError, syncOperations } from './sync'
 import { HistoryInputError, listMyProducts, listPurchaseHistory } from './history'
@@ -97,6 +98,24 @@ app.get('/api/v1/products/mine', async (context) => {
     if (error instanceof HistoryInputError) {
       return context.json({ error: { code: 'INVALID_QUERY', message: 'Product query is invalid' } }, 400)
     }
+    throw error
+  }
+})
+
+app.post('/api/v1/products/import-bigc', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED', message: 'กรุณาเข้าสู่ระบบก่อนนำเข้าสินค้า' } }, 401)
+  if (!isTrustedOrigin(context.req.raw, context.env)) {
+    return context.json({ error: { code: 'UNTRUSTED_ORIGIN', message: 'Origin is not allowed' } }, 403)
+  }
+  try {
+    const product = await importBigCProductLink(context.req.raw, context.env)
+    return context.json({ data: product, meta: { requestId: getRequestId(context.req.raw), source: product.source } })
+  } catch (error) {
+    if (error instanceof BigCLinkError) return context.json({
+      error: { code: error.code, message: bigCLinkErrorMessage(error.code), retryable: error.retryable },
+      meta: { requestId: getRequestId(context.req.raw) },
+    }, error.status)
     throw error
   }
 })
@@ -218,4 +237,16 @@ function productErrorMessage(code: ProductLookupError['code']): string {
 }
 
 export default app
+
+function bigCLinkErrorMessage(code: BigCLinkError['code']): string {
+  switch (code) {
+    case 'INVALID_IMPORT': return 'ข้อมูลนำเข้าไม่ถูกต้อง กรุณาส่งลิงก์สินค้าของ Big C'
+    case 'INVALID_BIGC_URL': return 'ใช้ลิงก์หน้าสินค้า https://www.bigc.co.th/product/... เท่านั้น ไม่ใช่หน้าค้นหาหรือลิงก์ย่อ'
+    case 'BIGC_BLOCKED': return 'Big C บล็อกการอ่านข้อมูลอัตโนมัติ จึงยังไม่เพิ่มสินค้า ลิงก์ที่ส่งมาไม่ได้ทำให้ข้ามระบบป้องกันบอตได้'
+    case 'BIGC_PRODUCT_NOT_FOUND': return 'ไม่พบหน้าสินค้า Big C นี้ กรุณาตรวจลิงก์'
+    case 'BIGC_PRODUCT_DATA_MISSING': return 'อ่านข้อมูล SKU ที่ตรงกับลิงก์ไม่ได้ จึงยังไม่เพิ่มสินค้า'
+    case 'BIGC_UPC_CONFLICT': return 'บาร์โค้ดของสินค้าขัดแย้งกับข้อมูลเดิม กรุณาตรวจสอบก่อนนำเข้า'
+    case 'BIGC_UNAVAILABLE': return 'ยังอ่านหน้าสินค้า Big C ไม่สำเร็จ กรุณาลองใหม่ภายหลัง'
+  }
+}
 
