@@ -25,13 +25,14 @@ The original UPC lookup/manual flow remains available. History/search includes S
 
 ## Verification and limits
 
-- Local API regression suite: 58 tests; web IndexedDB suite: 5 tests.
+- Local API regression suite: 58 tests; web IndexedDB suite: 6 tests (64 total).
 - Tests cover URL/redirect validation, identity checks, blocked imports with no database writes, repeat/concurrent imports, existing UPC reuse, SKU-only purchase/history/sync, schema preservation, v1-to-v2 cache migration, and quota-error retention.
 - Source HTML fixtures are synthetic and labelled as such. A passing parser test is not a successful live import.
 - Direct live probe of a public Big C product page on 2026-10-25 returned HTTP 403 with `cf-mitigated: challenge` and no structured product JSON. Successful live Big C extraction remains unverified; sending a URL does not remove that restriction.
 - A full link is required; mobile short links are intentionally rejected rather than followed through untrusted hosts.
 - The source may omit fields or change its structure. Appropriate reuse permissions must be confirmed before a broader rollout.
 - Account binding/reopening offline and iPhone Safari/Home Screen QA remain separate existing work; this change does not mark those complete.
+- Real deployed-browser check: Google login and the link-entry form work. Importing the public test product link returns the explicit Big C blocked message rather than a fabricated product. A stale v1 app tab initially blocked the IndexedDB upgrade; closing that old agent-created test tab allowed recovery without clearing browser data. A regression test covers this case, and the UI now explains the action to take and shows an unknown pending count if the queue cannot be read.
 
 ## Rollout
 

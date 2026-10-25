@@ -98,6 +98,32 @@ afterEach(() => {
 })
 
 describe('IndexedDB v2 product cache upgrade', () => {
+  it('reports a blocked upgrade, then retries without losing queued operations once the old connection closes', async () => {
+    await seedVersionOne()
+    // Simulate another old SmartCart tab: v1 did not close on versionchange.
+    const oldTab = await requestResult(indexedDB.open(databaseName, 1))
+    const offline = await import('../src/offline')
+
+    try {
+      await expect(offline.getPendingOperationCount()).rejects.toThrow('INDEXEDDB_UPGRADE_BLOCKED')
+      expect(oldTab.version).toBe(1)
+      expect(await readAll(oldTab, 'operations')).toEqual([existingOperation])
+      expect(await readAll(oldTab, 'products')).toEqual([legacyProduct])
+    } finally {
+      oldTab.close()
+    }
+
+    // The abandoned upgrade request must release its eventual connection and
+    // the rejected open promise must not poison future IndexedDB operations.
+    expect(await offline.getPendingOperationCount()).toBe(1)
+    expect(await offline.findCachedProduct(legacyProduct.upc!)).toEqual(legacyProduct)
+    const database = await openDatabase()
+    expect(database.version).toBe(2)
+    expect(await readAll(database, 'operations')).toEqual([existingOperation])
+    expect(await readAll(database, 'metadata')).toEqual([{ key: 'client-id', value: 'existing-device-client-id' }])
+    database.close()
+  })
+
   it('upgrades real v1 stores without deleting existing products, pending operations or metadata', async () => {
     await seedVersionOne()
     const offline = await import('../src/offline')

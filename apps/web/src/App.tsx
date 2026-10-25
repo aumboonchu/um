@@ -49,6 +49,7 @@ type MyProductItem = {
 type PageResponse<T> = { data: { items: T[]; nextCursor: string | null } }
 
 const apiOrigin = import.meta.env.VITE_API_ORIGIN ?? 'http://localhost:8787'
+const storageUpgradeMessage = 'มีแท็บ SmartCart อื่นขวางการอัปเดตพื้นที่เก็บข้อมูล กรุณาปิดแท็บ SmartCart อื่นทั้งหมด แล้วรีเฟรชหน้านี้ ไม่ต้องล้างข้อมูลเบราว์เซอร์'
 
 function App() {
   const [account, setAccount] = useState<Account | null>(null)
@@ -71,7 +72,7 @@ function App() {
   const [purchaseMessage, setPurchaseMessage] = useState<string | null>(null)
   const [isSavingPurchase, setIsSavingPurchase] = useState(false)
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
-  const [pendingSyncCount, setPendingSyncCount] = useState(0)
+  const [pendingSyncCount, setPendingSyncCount] = useState<number | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [historyItems, setHistoryItems] = useState<PurchaseHistoryItem[]>([])
@@ -151,8 +152,11 @@ function App() {
   async function refreshPendingSyncCount() {
     try {
       setPendingSyncCount(await getPendingOperationCount())
-    } catch {
-      setSyncMessage('ไม่สามารถเปิดพื้นที่เก็บข้อมูลในเครื่องได้')
+    } catch (error) {
+      setPendingSyncCount(null)
+      setSyncMessage(error instanceof Error && error.message === 'INDEXEDDB_UPGRADE_BLOCKED'
+        ? storageUpgradeMessage
+        : 'ไม่สามารถเปิดพื้นที่เก็บข้อมูลในเครื่องได้')
     }
   }
 
@@ -282,7 +286,11 @@ function App() {
 
   async function cacheSelectedProduct(selectedProduct: Product) {
     try { await cacheProduct(selectedProduct) }
-    catch { setSyncMessage('สินค้าถูกบันทึกในระบบแล้ว แต่ยังเก็บ cache บนอุปกรณ์นี้ไม่สำเร็จ') }
+    catch (error) {
+      setSyncMessage(error instanceof Error && error.message === 'INDEXEDDB_UPGRADE_BLOCKED'
+        ? storageUpgradeMessage
+        : 'สินค้าถูกบันทึกในระบบแล้ว แต่ยังเก็บ cache บนอุปกรณ์นี้ไม่สำเร็จ')
+    }
   }
 
   function changeProductInputMode(mode: ProductInputMode) {
@@ -424,8 +432,8 @@ function App() {
         </div>
         <div className="sync-banner" aria-live="polite">
           <span className={isOnline ? 'online-indicator' : 'offline-indicator'}>{isOnline ? 'ออนไลน์' : 'ออฟไลน์'}</span>
-          <span>{pendingSyncCount > 0 ? `รอซิงก์ ${pendingSyncCount} รายการ` : 'ไม่มีรายการรอซิงก์'}</span>
-          <button className="secondary-button" onClick={() => void syncQueue()} disabled={!account || !isOnline || isSyncing || pendingSyncCount === 0}>{isSyncing ? 'กำลังซิงก์…' : 'ซิงก์ตอนนี้'}</button>
+          <span>{pendingSyncCount === null ? 'ยังตรวจสอบจำนวนรายการรอซิงก์ไม่ได้' : pendingSyncCount > 0 ? `รอซิงก์ ${pendingSyncCount} รายการ` : 'ไม่มีรายการรอซิงก์'}</span>
+          <button className="secondary-button" onClick={() => void syncQueue()} disabled={!account || !isOnline || isSyncing || pendingSyncCount === null || pendingSyncCount === 0}>{isSyncing ? 'กำลังซิงก์…' : 'ซิงก์ตอนนี้'}</button>
           {syncMessage ? <small>{syncMessage}</small> : null}
         </div>
         <div className="account-panel" aria-live="polite">
