@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { apiFetch, clearBrowserSession, finishGoogleLogin, startGoogleLogin } from './auth-client'
 import ImportFeedback from './ImportFeedback'
+import ImageImport from './ImageImport'
 import { requestBigcImport, validateBigcImportUrl, type BigcImportState } from './bigc-import'
 import {
   cacheProduct,
@@ -18,7 +19,7 @@ type Product = CachedProduct
 type ProductResponse = { data: Product }
 type ApiError = { error?: { message?: string; manualEntry?: boolean } }
 type AppView = 'purchase' | 'history' | 'products'
-type ProductInputMode = 'bigc-link' | 'upc'
+type ProductInputMode = 'image' | 'bigc-link' | 'upc'
 
 type PurchaseHistoryItem = {
   id: string
@@ -58,7 +59,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [activeView, setActiveView] = useState<AppView>('purchase')
-  const [productInputMode, setProductInputMode] = useState<ProductInputMode>('bigc-link')
+  const [productInputMode, setProductInputMode] = useState<ProductInputMode>('image')
   const [bigcUrl, setBigcUrl] = useState('')
   const [bigcImportState, setBigcImportState] = useState<BigcImportState>({ status: 'idle' })
   const importSequence = useRef(0)
@@ -308,6 +309,7 @@ function App() {
     resetBigcImport()
     setProductInputMode(mode)
     setProduct(null)
+    setPrice('')
     setLookupMessage(null)
     setPurchaseMessage(null)
     setShowManualEntry(false)
@@ -319,6 +321,21 @@ function App() {
     setLookupMessage(null)
     setPurchaseMessage(null)
     setShowManualEntry(true)
+  }
+
+  function resetImageProduct() {
+    setProduct(null)
+    setPrice('')
+    setLookupMessage(null)
+    setPurchaseMessage(null)
+    setShowManualEntry(false)
+  }
+
+  function acceptImageProduct(imported: Product) {
+    setProduct(imported)
+    setPrice(imported.sourcePriceMinor !== null ? (imported.sourcePriceMinor / 100).toFixed(2) : '')
+    setPurchaseMessage(null)
+    void cacheSelectedProduct(imported)
   }
 
   function resetBigcImport() {
@@ -457,7 +474,7 @@ function App() {
         <div>
           <p className="eyebrow">SmartCart PWA</p>
           <h1 id="app-title">บันทึกรายการซื้อได้ทุกที่</h1>
-          <p>วางลิงก์หน้าสินค้า Big C เพื่อนำเข้าเป็น SKU ของ SmartCart หรือค้นสินค้าที่บันทึกไว้ด้วย UPC</p>
+          <p>แคปหน้าสินค้าแล้วแนบภาพ ให้ระบบอ่านข้อมูล ตรวจยืนยันก่อนเพิ่มเป็น SKU หรือค้นสินค้าที่บันทึกไว้ด้วย UPC</p>
         </div>
         <div className="sync-banner" aria-live="polite">
           <span className={isOnline ? 'online-indicator' : 'offline-indicator'}>{isOnline ? 'ออนไลน์' : 'ออฟไลน์'}</span>
@@ -481,9 +498,10 @@ function App() {
         </nav>
 
         {activeView === 'purchase' ? <PurchaseView
+          accountKey={account?.id ?? 'signed-out'} onImageProduct={acceptImageProduct} onImageReset={resetImageProduct}
           inputMode={productInputMode} changeInputMode={changeProductInputMode} bigcUrl={bigcUrl} setBigcUrl={changeBigcUrl}
           importBigcProduct={importBigcProduct} bigcImportState={bigcImportState} canImport={Boolean(account) && isOnline}
-          importUnavailableReason={!account ? 'เข้าสู่ระบบด้วย Google ก่อนเพิ่มสินค้า' : !isOnline ? 'ขณะนี้ออฟไลน์ เชื่อมต่ออินเทอร์เน็ตก่อนนำเข้าลิงก์' : null}
+          importUnavailableReason={!account ? 'เข้าสู่ระบบด้วย Google ก่อนเพิ่มสินค้า' : !isOnline ? 'ขณะนี้ออฟไลน์ เชื่อมต่ออินเทอร์เน็ตก่อนอ่านภาพและเพิ่มสินค้าใหม่' : null}
           upc={upc} setUpc={setUpc} product={product} lookupMessage={lookupMessage} isLookingUp={isLookingUp}
           showManualEntry={showManualEntry} manualName={manualName} setManualName={setManualName} manualBrand={manualBrand} setManualBrand={setManualBrand}
           isSavingProduct={isSavingProduct} lookupProduct={lookupProduct} saveManualProduct={saveManualProduct} beginManualEntry={beginManualEntry}
@@ -519,6 +537,7 @@ function App() {
 }
 
 type PurchaseViewProps = {
+  accountKey: string; onImageProduct: (product: Product) => void; onImageReset: () => void
   inputMode: ProductInputMode; changeInputMode: (mode: ProductInputMode) => void; bigcUrl: string; setBigcUrl: (value: string) => void
   importBigcProduct: () => Promise<void>; bigcImportState: BigcImportState; canImport: boolean; importUnavailableReason: string | null
   upc: string; setUpc: (value: string) => void; product: Product | null; lookupMessage: string | null; isLookingUp: boolean
@@ -535,10 +554,13 @@ function PurchaseView(props: PurchaseViewProps) {
     <h2 id="lookup-title">Add Purchase</h2>
     <p className="import-steps">1. เพิ่มสินค้าเป็น SKU <span aria-hidden="true">→</span> 2. กรอกราคาและบันทึกรายการซื้อ</p>
     <div className="input-mode-switch" role="group" aria-label="วิธีเพิ่มสินค้า">
-      <button className={props.inputMode === 'bigc-link' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'bigc-link'} onClick={() => props.changeInputMode('bigc-link')} disabled={props.isLookingUp || props.isSavingProduct}>ลิงก์ Big C</button>
+      <button className={props.inputMode === 'image' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'image'} onClick={() => props.changeInputMode('image')} disabled={props.isLookingUp || props.isSavingProduct}>ภาพหน้าสินค้า</button>
       <button className={props.inputMode === 'upc' ? 'tab-active' : 'secondary-button'} aria-pressed={props.inputMode === 'upc'} onClick={() => props.changeInputMode('upc')} disabled={props.isLookingUp || props.isSavingProduct}>UPC / เพิ่มเอง</button>
     </div>
-    {props.inputMode === 'bigc-link' ? <form className="lookup-form bigc-import-form" noValidate onSubmit={(event) => { event.preventDefault(); void props.importBigcProduct() }}>
+    {props.inputMode === 'image' ? <>
+      <ImageImport key={props.accountKey} accountId={props.accountKey === 'signed-out' ? null : props.accountKey} apiOrigin={apiOrigin} canImport={props.canImport} onProduct={props.onImageProduct} onReset={props.onImageReset} />
+      {props.importUnavailableReason ? <p className="import-prerequisite" role="status">{props.importUnavailableReason}</p> : null}
+    </> : props.inputMode === 'bigc-link' ? <form className="lookup-form bigc-import-form" noValidate onSubmit={(event) => { event.preventDefault(); void props.importBigcProduct() }}>
       <label htmlFor="bigc-url">ลิงก์หน้าสินค้า Big C</label>
       <div className="input-row" aria-busy={props.isLookingUp}><input ref={bigcInput} id="bigc-url" type="url" value={props.bigcUrl} onChange={(event) => props.setBigcUrl(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="https://www.bigc.co.th/product/…" maxLength={2048} required disabled={props.isLookingUp} aria-describedby="bigc-import-help" aria-invalid={props.bigcImportState.status === 'error' && props.bigcImportState.code === 'INVALID_BIGC_URL' ? true : undefined} /><button className="primary-button" disabled={props.isLookingUp || !props.canImport}>{props.isLookingUp ? 'กำลังเพิ่มสินค้า…' : 'เพิ่มสินค้าเป็น SKU'}</button></div>
       <ImportFeedback state={props.bigcImportState} onRetry={() => void props.importBigcProduct()} onEdit={() => bigcInput.current?.focus()} onManual={() => props.changeInputMode('upc')} canRetry={props.canImport && !props.isLookingUp} canManual={!props.isLookingUp} />
@@ -584,4 +606,3 @@ function formatDate(value: string): string {
 }
 
 export default App
-

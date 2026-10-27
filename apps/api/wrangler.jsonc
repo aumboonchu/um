@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
+  "ai": { "binding": "AI" },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
@@ -25,6 +26,7 @@
   "env": {
     "staging": {
       "name": "smartcart-api-staging",
+      "ai": { "binding": "AI" },
       "vars": {
         "APP_ORIGIN": "https://aumboonchu.github.io",
         "APP_URL": "https://aumboonchu.github.io/um/",
@@ -62,4 +64,3 @@
     }
   }
 }
-

@@ -160,6 +160,23 @@ button:disabled { cursor: wait; opacity: .65; }
 .lookup-form, .manual-form, .purchase-form { display: grid; gap: 10px; }
 .input-mode-switch { display: flex; flex-wrap: wrap; gap: 8px; }
 .manual-entry-toggle { justify-self: start; }
+.image-import { display: grid; gap: 14px; min-width: 0; }
+.image-import h3 { margin: 0; }
+.image-import-notice, .image-import-field-help { margin: 0; color: #526159; font-size: .88rem; line-height: 1.6; }
+.image-import input[type="file"] { max-width: 100%; min-width: 0; background: #f0f7f3; border-style: dashed; padding: 14px; }
+.image-import input[type="file"]::file-selector-button { border: 0; border-radius: 6px; background: #dcefe3; color: #075e3b; padding: 10px 12px; margin-right: 10px; font: inherit; cursor: pointer; }
+.image-import-preview { margin: 0; padding: 12px; border: 1px solid #d4e1d9; border-radius: 12px; background: #fff; text-align: center; }
+.image-import-preview img { display: block; width: 100%; max-height: 380px; object-fit: contain; border-radius: 6px; }
+.image-import-preview figcaption { margin-top: 10px; font-size: .82rem; line-height: 1.5; color: #526159; }
+.image-import-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.image-import-review { display: grid; gap: 14px; min-width: 0; }
+.image-import-review fieldset { min-width: 0; display: grid; gap: 12px; margin: 0; padding: 16px; border: 1px solid #afc9ba; border-radius: 12px; background: #fff; }
+.image-import-review legend { padding-inline: 8px; font-weight: 700; color: #0c7548; }
+.image-import-warnings { margin: 0; padding-left: 20px; color: #775217; font-size: .85rem; line-height: 1.6; }
+.image-import-confirmation { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 8px; background: #edf8f1; line-height: 1.6; }
+.image-import-confirmation input[type="checkbox"] { flex: 0 0 24px; width: 24px; height: 24px; min-height: 24px; padding: 0; margin: 2px 0 0; accent-color: #0f945c; }
+.image-import-feedback .import-action { margin-top: 12px; }
+.image-import button { white-space: normal; }
 .product-result > div, .history-card > div, .library-card > div { min-width: 0; overflow-wrap: anywhere; }
 
 .manual-form {
@@ -284,6 +301,9 @@ input:focus { outline: 3px solid #bde7d1; border-color: #0f945c; }
 }
 
 @media (max-width: 600px) {
+  .image-import-actions { flex-direction: column; }
+  .image-import-actions button { width: 100%; }
+  .image-import-review fieldset { padding: 12px; }
   .bigc-import-form .input-row { grid-template-columns: minmax(0, 1fr); }
   .bigc-import-form .input-row > button { width: 100%; }
   .import-feedback { gap: 10px; padding: 14px 12px; }
@@ -299,4 +319,3 @@ input:focus { outline: 3px solid #bde7d1; border-color: #0f945c; }
   .history-card img, .library-card img, .small-image-placeholder { width: 44px; height: 44px; }
   .history-total { grid-column: 2; text-align: left; }
 }
-

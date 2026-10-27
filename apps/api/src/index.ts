@@ -14,6 +14,8 @@ import {
 } from './auth'
 import { ManualProductInputError, ProductLookupError, createManualProduct, importBigCProductLink, lookupProductByUpc } from './products'
 import { BigCLinkError } from './bigc-link'
+import { extractProductImage, ImageExtractionError } from './image-extraction'
+import { confirmImageProduct, ImageProductError } from './image-product'
 import { PurchaseInputError, PurchaseProductNotFoundError, createPurchase } from './purchases'
 import { SyncInputError, syncOperations } from './sync'
 import { HistoryInputError, listMyProducts, listPurchaseHistory } from './history'
@@ -98,6 +100,26 @@ app.get('/api/v1/products/mine', async (context) => {
     if (error instanceof HistoryInputError) {
       return context.json({ error: { code: 'INVALID_QUERY', message: 'Product query is invalid' } }, 400)
     }
+    throw error
+  }
+})
+
+app.post('/api/v1/products/extract-image', async (context) => {
+  try {
+    const preview = await extractProductImage(context.req.raw, context.env)
+    return context.json({ data: preview, meta: { requestId: getRequestId(context.req.raw) } })
+  } catch (error) {
+    if (error instanceof ImageExtractionError) return context.json({ error: { code: error.code, message: imageErrorMessage(error.code) } }, error.status)
+    throw error
+  }
+})
+
+app.post('/api/v1/products/import-image', async (context) => {
+  try {
+    const result = await confirmImageProduct(context.req.raw, context.env)
+    return context.json({ data: result.product, meta: { created: result.created, requestId: getRequestId(context.req.raw) } }, result.created ? 201 : 200)
+  } catch (error) {
+    if (error instanceof ImageProductError) return context.json({ error: { code: error.code, message: imageErrorMessage(error.code) } }, error.status)
     throw error
   }
 })
@@ -238,6 +260,20 @@ function productErrorMessage(code: ProductLookupError['code']): string {
 
 export default app
 
+function imageErrorMessage(code: string): string {
+  switch (code) {
+    case 'UNAUTHENTICATED': return 'กรุณาเข้าสู่ระบบก่อนอ่านภาพหรือเพิ่มสินค้า'
+    case 'UNTRUSTED_ORIGIN': return 'กรุณาใช้หน้า SmartCart ที่ได้รับอนุญาต'
+    case 'IMAGE_TOO_LARGE': return 'ภาพใหญ่เกินไป กรุณาใช้ภาพขนาดเล็กลง'
+    case 'IMAGE_UNSUPPORTED': return 'รองรับภาพ JPG, PNG และ WebP เท่านั้น'
+    case 'IMAGE_UNREADABLE': return 'ยังอ่านข้อมูลสินค้าในภาพไม่ชัด กรุณาเลือกภาพใหม่หรือกรอกเองจากภาพ'
+    case 'IMAGE_QUOTA_EXCEEDED': return 'ถึงขีดจำกัดการอ่านภาพวันนี้แล้ว กรุณากรอกเองหรือกลับมาลองวันถัดไป'
+    case 'IMAGE_AI_UNAVAILABLE': return 'บริการอ่านภาพยังไม่พร้อม กรุณาลองใหม่ภายหลังหรือกรอกเองจากภาพ'
+    case 'IMAGE_IMPORT_CONFLICT': return 'รายการยืนยันนี้มีข้อมูลไม่ตรงกับครั้งก่อน กรุณาตรวจสอบสินค้าเดิมก่อนเริ่มใหม่'
+    default: return 'กรุณาตรวจชื่อสินค้า ราคา และบาร์โค้ด แล้วติ๊กยืนยันข้อมูลก่อนบันทึก'
+  }
+}
+
 function bigCLinkErrorMessage(code: BigCLinkError['code']): string {
   switch (code) {
     case 'INVALID_IMPORT': return 'ข้อมูลนำเข้าไม่ถูกต้อง กรุณาส่งลิงก์สินค้าของ Big C'
@@ -249,4 +285,3 @@ function bigCLinkErrorMessage(code: BigCLinkError['code']): string {
     case 'BIGC_UNAVAILABLE': return 'ยังอ่านหน้าสินค้า Big C ไม่สำเร็จ กรุณาลองใหม่ภายหลัง'
   }
 }
-
