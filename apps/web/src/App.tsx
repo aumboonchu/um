@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { apiFetch, clearBrowserSession, finishGoogleLogin, startGoogleLogin } from './auth-client'
+import { apiFetch, browserSessionInfo, clearBrowserSession, finishGoogleLogin, isBrowserSessionChange, startGoogleLogin } from './auth-client'
 import ImportFeedback from './ImportFeedback'
 import ImageImport from './ImageImport'
 import BarcodeScanner from './BarcodeScanner'
@@ -97,17 +97,34 @@ function App() {
   const [authMessage, setAuthMessage] = useState<string | null>(null)
   const [googleEnabled, setGoogleEnabled] = useState(false)
   const [isSigningIn, setIsSigningIn] = useState(false)
+  const [sessionInfo, setSessionInfo] = useState<ReturnType<typeof browserSessionInfo>>(null)
+  const authSequence = useRef(0)
 
   useEffect(() => {
     void loadAccount()
     void refreshPendingSyncCount()
-    return () => { importSequence.current += 1 }
+    return () => { importSequence.current += 1; authSequence.current += 1 }
+  }, [])
+
+  useEffect(() => {
+    function changed(event: StorageEvent) {
+      if (!isBrowserSessionChange(event, apiOrigin)) return
+      // Revalidate before showing private data if another tab switches account or logs out.
+      authSequence.current += 1
+      setAccount(null); setSessionInfo(null); setHistoryItems([]); setMyProducts([])
+      resetBigcImport(); setProduct(null); setShowManualEntry(false)
+      setIsLoading(true)
+      void loadAccount()
+    }
+    window.addEventListener('storage', changed)
+    return () => window.removeEventListener('storage', changed)
   }, [])
 
   useEffect(() => {
     function handleOnline() {
       setIsOnline(true)
-      void syncQueue()
+      if (!account) { setIsLoading(true); void loadAccount() }
+      else void syncQueue()
     }
     function handleOffline() {
       setIsOnline(false)
@@ -132,6 +149,7 @@ function App() {
   }, [activeView, account, isOnline])
 
   async function loadAccount() {
+    const sequence = ++authSequence.current
     try {
       const result = new URLSearchParams(window.location.search).get('auth')
       if (result) {
@@ -142,18 +160,26 @@ function App() {
       }
       await finishGoogleLogin(apiOrigin)
       const config = await apiFetch(apiOrigin, '/auth/config')
+      if (sequence !== authSequence.current) return
       if (!config.ok) throw new Error('AUTH_CONFIG_FAILED')
       const settings = await config.json() as { data: { googleEnabled: boolean } }
       setGoogleEnabled(settings.data.googleEnabled)
       if (!settings.data.googleEnabled) setAuthMessage('Google Login ยังอยู่ระหว่างตั้งค่า')
       const response = await apiFetch(apiOrigin, '/auth/me')
-      if (!response.ok) return
+      if (sequence !== authSequence.current) return
+      if (!response.ok) throw new Error('AUTH_CHECK_FAILED')
       const payload = (await response.json()) as AuthResponse
+      if (sequence !== authSequence.current) return
       setAccount(payload.data.authenticated ? payload.data.account : null)
+      setSessionInfo(browserSessionInfo(apiOrigin))
+      if (payload.data.authenticated) setAuthMessage(null)
     } catch {
-      setAuthMessage('ยังเชื่อมต่อการเข้าสู่ระบบไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่')
+      if (sequence !== authSequence.current) return
+      const saved = browserSessionInfo(apiOrigin)
+      setSessionInfo(saved)
+      setAuthMessage(saved ? 'ยังตรวจสอบการเข้าสู่ระบบเดิมไม่ได้ ระบบยังเก็บเซสชันไว้ กรุณาเชื่อมต่อแล้วตรวจสอบอีกครั้ง ไม่จำเป็นต้องเริ่ม Google Login ใหม่ทันที' : 'ยังเชื่อมต่อการเข้าสู่ระบบไม่สำเร็จ กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่')
     } finally {
-      setIsLoading(false)
+      if (sequence === authSequence.current) setIsLoading(false)
     }
   }
 
@@ -241,8 +267,10 @@ function App() {
     try {
       const response = await apiFetch(apiOrigin, '/auth/logout', { method: 'POST' })
       if (!response.ok) throw new Error('LOGOUT_FAILED')
-      clearBrowserSession()
+      authSequence.current += 1
+      clearBrowserSession(apiOrigin)
       setAccount(null)
+      setSessionInfo(null)
       setHistoryItems([])
       setMyProducts([])
       setAuthMessage(null)
@@ -487,10 +515,11 @@ function App() {
           {isLoading ? <p>กำลังตรวจสอบการเข้าสู่ระบบ…</p> : account ? <>
             <p className="account-label">เข้าสู่ระบบแล้ว</p><strong>{account.displayName ?? 'SmartCart user'}</strong>
             {account.primaryEmail ? <span>{account.primaryEmail}</span> : null}
+            <small>{sessionInfo?.remembered ? `จดจำการเข้าสู่ระบบในเบราว์เซอร์นี้ถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น กรุณาออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร จึงใช้การเข้าสู่ระบบได้เฉพาะแท็บนี้'}</small>
             <button className="secondary-button" onClick={() => void signOut()} disabled={isSigningOut}>{isSigningOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}</button>
-          </> : <><p className="account-label">ยังไม่ได้เข้าสู่ระบบ</p><button className="google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button></>}
+          </> : <><p className="account-label">{sessionInfo ? 'รอตรวจสอบการเข้าสู่ระบบเดิม' : 'ยังไม่ได้เข้าสู่ระบบ'}</p><button className="google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button><small>จดจำการเข้าสู่ระบบบนเบราว์เซอร์นี้อัตโนมัติ สูงสุด 30 วัน โดยไม่เก็บรหัสผ่าน Google</small></>}
           {authMessage ? <small role="status">{authMessage}</small> : null}
-          {!googleEnabled && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
+          {(!googleEnabled || (sessionInfo && !account)) && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
         </div>
         <nav className="view-tabs" aria-label="SmartCart sections">
           <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('purchase')} disabled={isLookingUp}>Add Purchase</button>
