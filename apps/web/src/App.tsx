@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { apiFetch, clearBrowserSession, finishGoogleLogin, startGoogleLogin } from './auth-client'
 import ImportFeedback from './ImportFeedback'
 import ImageImport from './ImageImport'
+import BarcodeScanner from './BarcodeScanner'
 import { requestBigcImport, validateBigcImportUrl, type BigcImportState } from './bigc-import'
 import {
   cacheProduct,
@@ -568,6 +569,7 @@ function PurchaseView(props: PurchaseViewProps) {
       <p id="bigc-import-help" className="status-message import-help">ส่งลิงก์ให้ระบบอ่านข้อมูลโดยไม่ต้องเปิด Big C สินค้าจะถูกเพิ่มเมื่อระบบยืนยัน SKU สำเร็จเท่านั้น หากเว็บปิดกั้น ระบบจะแจ้งว่าไม่ได้เพิ่ม</p>
     </form> : <form className="lookup-form" onSubmit={(event) => void props.lookupProduct(event)}>
       <label htmlFor="upc">UPC / Barcode</label><div className="input-row"><input id="upc" value={props.upc} onChange={(event) => props.setUpc(event.target.value)} inputMode="numeric" autoComplete="off" placeholder="เช่น 8851959129012" required disabled={props.isLookingUp} /><button className="primary-button" disabled={props.isLookingUp}>{props.isLookingUp ? 'กำลังค้น…' : 'ค้นหา'}</button></div>
+      <BarcodeScanner disabled={props.isLookingUp || props.isSavingProduct} onDetected={props.setUpc} />
       <button type="button" className="secondary-button manual-entry-toggle" onClick={props.beginManualEntry} disabled={props.isLookingUp || props.isSavingProduct || !props.canImport || !props.upc.replace(/\D/g, '')}>เพิ่มสินค้าจาก UPC เอง</button>
     </form>}
     {props.lookupMessage ? <p className="status-message" role="status">{props.lookupMessage}</p> : null}

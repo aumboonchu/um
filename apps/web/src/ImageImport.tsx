@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { apiFetch } from './auth-client'
+import BarcodeScanner from './BarcodeScanner'
 import {
   clearPendingImageAttempt, createImageImportAttempt, emptyImageFields, fieldsFromImageDraft, imageFingerprint,
   loadPendingImageAttempt, prepareImageUpload, requestPersistedImageConfirmation, requestImageExtraction, validateSourceImage,
@@ -310,6 +311,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
         <label>ราคาอ้างอิงจากภาพ (บาท)<input value={fields.sourcePrice} onChange={(event) => editField('sourcePrice', event.target.value)} inputMode="decimal" placeholder="เว้นว่างหากไม่มีราคา" /></label>
         <p className="image-import-field-help">ราคาในภาพไม่ใช่การรับประกันราคาปัจจุบัน และยังไม่ใช่ราคาของรายการซื้อ</p>
         <label>UPC / EAN บาร์โค้ด (ไม่บังคับ)<input value={fields.upc} onChange={(event) => editField('upc', event.target.value)} inputMode="numeric" maxLength={14} placeholder="ใส่เมื่อเห็นบาร์โค้ดชัดเจนเท่านั้น" /></label>
+        <BarcodeScanner disabled={!canImport || busy || locked} onDetected={(value) => editField('upc', value)} />
         <p className="image-import-field-help">หากภาพไม่มีบาร์โค้ด ให้เว้นว่าง ห้ามใช้รหัสสินค้า Big C แทนบาร์โค้ด</p>
         <label>รหัสสินค้าที่แสดงบนภาพ (ไม่บังคับ)<input value={fields.retailerCode} onChange={(event) => editField('retailerCode', event.target.value)} maxLength={80} placeholder="เช่น 60560" /></label>
         <p className="image-import-field-help">เก็บไว้เป็นข้อมูลอ้างอิงเท่านั้น ไม่ใช่ UPC และไม่ใช้ยืนยันรหัสในลิงก์ Big C</p>
