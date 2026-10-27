@@ -13,4 +13,5 @@ coverage/
 *.local
 work/wrangler-logs/
 work/smartcart-staging-before-sku-*.sql
-
+work/backups/
+work/purchase-qa/

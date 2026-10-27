@@ -3,6 +3,8 @@ import { apiFetch, browserSessionInfo, clearBrowserSession, finishGoogleLogin, i
 import ImportFeedback from './ImportFeedback'
 import ImageImport from './ImageImport'
 import BarcodeScanner from './BarcodeScanner'
+import { HomeSummary, ProductDetailView, PurchaseDetailView, PurchaseFieldInputs } from './AccountViews'
+import { localDateTime, purchaseFieldsPayload, type ProductDetail } from './purchase-management'
 import { requestBigcImport, validateBigcImportUrl, type BigcImportState } from './bigc-import'
 import {
   cacheProduct,
@@ -19,7 +21,7 @@ type AuthResponse = { data: { authenticated: boolean; account: Account | null } 
 type Product = CachedProduct
 type ProductResponse = { data: Product }
 type ApiError = { error?: { message?: string; manualEntry?: boolean } }
-type AppView = 'purchase' | 'history' | 'products'
+type AppView = 'home' | 'purchase' | 'history' | 'products'
 type ProductInputMode = 'image' | 'bigc-link' | 'upc'
 
 type PurchaseHistoryItem = {
@@ -59,7 +61,11 @@ function App() {
   const [account, setAccount] = useState<Account | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [activeView, setActiveView] = useState<AppView>('purchase')
+  const [activeView, setActiveView] = useState<AppView>('home')
+  const [detail, setDetail] = useState<{ kind: 'purchase' | 'product'; id: string } | null>(null)
+  const [detailStack, setDetailStack] = useState<Array<{ kind: 'purchase' | 'product'; id: string }>>([])
+  const [detailsDirty, setDetailsDirty] = useState(false)
+  const [dataVersion, setDataVersion] = useState(0)
   const [productInputMode, setProductInputMode] = useState<ProductInputMode>('image')
   const [bigcUrl, setBigcUrl] = useState('')
   const [bigcImportState, setBigcImportState] = useState<BigcImportState>({ status: 'idle' })
@@ -76,6 +82,8 @@ function App() {
   const [quantity, setQuantity] = useState('1')
   const [price, setPrice] = useState('')
   const [storeName, setStoreName] = useState('')
+  const [purchasedAt, setPurchasedAt] = useState(localDateTime)
+  const [purchaseNote, setPurchaseNote] = useState('')
   const [purchaseMessage, setPurchaseMessage] = useState<string | null>(null)
   const [isSavingPurchase, setIsSavingPurchase] = useState(false)
   const [isOnline, setIsOnline] = useState(() => navigator.onLine)
@@ -112,6 +120,7 @@ function App() {
       // Revalidate before showing private data if another tab switches account or logs out.
       authSequence.current += 1
       setAccount(null); setSessionInfo(null); setHistoryItems([]); setMyProducts([])
+      setDetail(null); setDetailStack([]); setDetailsDirty(false)
       resetBigcImport(); setProduct(null); setShowManualEntry(false)
       setIsLoading(true)
       void loadAccount()
@@ -146,7 +155,7 @@ function App() {
     if (!account || !isOnline) return
     if (activeView === 'history') void loadHistory(true)
     if (activeView === 'products') void loadMyProducts(true)
-  }, [activeView, account, isOnline])
+  }, [activeView, account, isOnline, dataVersion])
 
   async function loadAccount() {
     const sequence = ++authSequence.current
@@ -200,6 +209,7 @@ function App() {
     try {
       const summary = await syncPendingOperations(apiOrigin)
       setPendingSyncCount(summary.pending)
+      if (summary.synced > 0) setDataVersion(value => value + 1)
       if (summary.synced > 0) setSyncMessage(`ซิงก์รายการซื้อแล้ว ${summary.synced} รายการ`)
       else if (summary.validationErrors > 0) setSyncMessage('มีรายการที่ตรวจสอบไม่ผ่าน กรุณาตรวจสอบข้อมูลอีกครั้ง')
       else if (summary.retryableErrors > 0) setSyncMessage('ยังซิงก์ไม่สำเร็จ ระบบจะลองใหม่เมื่อเชื่อมต่อ')
@@ -263,6 +273,7 @@ function App() {
   }
 
   async function signOut() {
+    if (detailsDirty && !window.confirm('มีข้อมูลแก้ไขหรือคำขอที่รอยืนยัน ต้องการออกจากระบบหรือไม่? รายการที่ส่งแล้วจะเก็บรหัสไว้ให้ตรวจต่อเมื่อเข้าสู่ระบบบัญชีเดิม')) return
     setIsSigningOut(true)
     try {
       const response = await apiFetch(apiOrigin, '/auth/logout', { method: 'POST' })
@@ -271,6 +282,7 @@ function App() {
       clearBrowserSession(apiOrigin)
       setAccount(null)
       setSessionInfo(null)
+      setDetail(null); setDetailStack([]); setDetailsDirty(false)
       setHistoryItems([])
       setMyProducts([])
       setAuthMessage(null)
@@ -288,6 +300,7 @@ function App() {
 
   async function lookupProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setPurchasedAt(localDateTime()); setPurchaseNote('')
     const normalizedUpc = upc.replace(/\D/g, '')
     setUpc(normalizedUpc)
     setProduct(null)
@@ -353,6 +366,7 @@ function App() {
   }
 
   function resetImageProduct() {
+    setPurchasedAt(localDateTime()); setPurchaseNote('')
     setProduct(null)
     setPrice('')
     setLookupMessage(null)
@@ -361,6 +375,7 @@ function App() {
   }
 
   function acceptImageProduct(imported: Product) {
+    setPurchasedAt(localDateTime()); setPurchaseNote('')
     setProduct(imported)
     setPrice(imported.sourcePriceMinor !== null ? (imported.sourcePriceMinor / 100).toFixed(2) : '')
     setPurchaseMessage(null)
@@ -471,16 +486,16 @@ function App() {
       setPurchaseMessage('กรุณาเข้าสู่ระบบด้วย Google ก่อนบันทึกรายการซื้อ')
       return
     }
-    const unitPriceMinor = Math.round(Number(price) * 100)
-    const parsedQuantity = Number(quantity)
-    if (!Number.isSafeInteger(unitPriceMinor) || unitPriceMinor <= 0 || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      setPurchaseMessage('กรุณาระบุราคาและจำนวนให้ถูกต้อง')
+    let input: ReturnType<typeof purchaseFieldsPayload>
+    try { input = purchaseFieldsPayload({ price, quantity, purchasedAt, storeName, note: purchaseNote }) }
+    catch (error) {
+      setPurchaseMessage(error instanceof Error ? error.message : 'กรุณาระบุข้อมูลให้ถูกต้อง')
       return
     }
     setIsSavingPurchase(true)
     setPurchaseMessage(null)
     try {
-      await queuePurchase({ productId: product.id, unitPriceMinor, quantity: parsedQuantity, purchasedAt: new Date().toISOString(), storeName: storeName.trim() || null, note: null })
+      await queuePurchase({ productId: product.id, ...input })
       setBigcImportState({ status: 'idle' })
       const persistenceGranted = await requestPersistentStorage()
       await refreshPendingSyncCount()
@@ -495,6 +510,27 @@ function App() {
     } finally {
       setIsSavingPurchase(false)
     }
+  }
+
+  function navigate(view: AppView) {
+    if (detailsDirty && !window.confirm('มีข้อมูลแก้ไขที่ยังไม่บันทึกหรือคำขอที่รอยืนยัน ต้องการออกจากหน้านี้หรือไม่? คำขอที่ส่งแล้วสามารถกลับมาตรวจด้วยรหัสเดิมได้')) return
+    setDetailsDirty(false); setDetail(null); setDetailStack([]); setActiveView(view)
+  }
+  function openDetail(kind: 'purchase' | 'product', id: string) {
+    if (detailsDirty && !window.confirm('ต้องการออกจากรายการที่ยังแก้ไขหรือรอยืนยันอยู่หรือไม่?')) return
+    setDetailStack(items => detail ? [...items, detail].slice(-20) : [])
+    setDetailsDirty(false); setDetail({ kind, id })
+  }
+  function closeDetail() {
+    if (detailsDirty && !window.confirm('ต้องการกลับโดยยังมีข้อมูลแก้ไขหรือรายการรอยืนยันหรือไม่?')) return
+    setDetailsDirty(false)
+    setDetail(detailStack.at(-1) ?? null); setDetailStack(items => items.slice(0, -1))
+  }
+  function buyAgain(item: ProductDetail) {
+    acceptImageProduct({ id: item.id, sku: item.sku, upc: item.upc, name: item.name, brand: item.brand, packageSize: item.packageSize, imageUrl: item.imageUrl,
+      source: 'smartcart', sourcePriceMinor: item.recentPurchases[0]?.unitPriceMinor ?? null, regularPriceMinor: null, fetchedAt: null })
+    setQuantity('1'); setPurchasedAt(localDateTime()); setPurchaseNote(''); setStoreName('')
+    setDetail(null); setDetailStack([]); setDetailsDirty(false); setActiveView('purchase')
   }
 
   return (
@@ -522,12 +558,18 @@ function App() {
           {(!googleEnabled || (sessionInfo && !account)) && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
         </div>
         <nav className="view-tabs" aria-label="SmartCart sections">
-          <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('purchase')} disabled={isLookingUp}>Add Purchase</button>
-          <button className={activeView === 'history' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('history')} disabled={isLookingUp}>ประวัติ</button>
-          <button className={activeView === 'products' ? 'tab-active' : 'secondary-button'} onClick={() => setActiveView('products')} disabled={isLookingUp}>สินค้าของฉัน</button>
+          <button className={activeView === 'home' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('home')} disabled={isLookingUp}>ภาพรวม</button>
+          <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('purchase')} disabled={isLookingUp}>Add Purchase</button>
+          <button className={activeView === 'history' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('history')} disabled={isLookingUp}>ประวัติ</button>
+          <button className={activeView === 'products' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('products')} disabled={isLookingUp}>สินค้าของฉัน</button>
         </nav>
 
-        {activeView === 'purchase' ? <PurchaseView
+        {detail && account ? detail.kind === 'purchase' ? <PurchaseDetailView key={`${account.id}:purchase:${detail.id}`} apiOrigin={apiOrigin} accountId={account.id} id={detail.id} online={isOnline} onBack={closeDetail} onDirtyChange={setDetailsDirty} onChanged={() => setDataVersion(v => v + 1)} onProduct={id => openDetail('product', id)} />
+          : <ProductDetailView key={`${account.id}:product:${detail.id}`} apiOrigin={apiOrigin} id={detail.id} online={isOnline} onBack={closeDetail} onPurchase={id => openDetail('purchase', id)} onBuy={buyAgain} /> : null}
+
+        {activeView === 'home' && !detail ? <HomeSummary key={account?.id ?? 'signed-out'} apiOrigin={apiOrigin} accountId={account?.id ?? null} online={isOnline} version={dataVersion} pendingCount={pendingSyncCount} onAdd={() => navigate('purchase')} onHistory={() => navigate('history')} onPurchase={id => openDetail('purchase', id)} /> : null}
+
+        {activeView === 'purchase' && !detail ? <PurchaseView
           accountKey={account?.id ?? 'signed-out'} onImageProduct={acceptImageProduct} onImageReset={resetImageProduct}
           inputMode={productInputMode} changeInputMode={changeProductInputMode} bigcUrl={bigcUrl} setBigcUrl={changeBigcUrl}
           importBigcProduct={importBigcProduct} bigcImportState={bigcImportState} canImport={Boolean(account) && isOnline}
@@ -536,27 +578,28 @@ function App() {
           showManualEntry={showManualEntry} manualName={manualName} setManualName={setManualName} manualBrand={manualBrand} setManualBrand={setManualBrand}
           isSavingProduct={isSavingProduct} lookupProduct={lookupProduct} saveManualProduct={saveManualProduct} beginManualEntry={beginManualEntry}
           quantity={quantity} setQuantity={setQuantity} price={price} setPrice={setPrice} storeName={storeName} setStoreName={setStoreName}
+          purchasedAt={purchasedAt} setPurchasedAt={setPurchasedAt} purchaseNote={purchaseNote} setPurchaseNote={setPurchaseNote}
           isSavingPurchase={isSavingPurchase} purchaseMessage={purchaseMessage} savePurchase={savePurchase}
         /> : null}
 
-        {activeView === 'history' ? <section className="content-panel" aria-labelledby="history-title">
+        {activeView === 'history' && !detail ? <section className="content-panel" aria-labelledby="history-title">
           <h2 id="history-title">ประวัติรายการซื้อ</h2>
           <SearchForm value={historySearch} setValue={setHistorySearch} onSubmit={() => { setHistoryQuery(historySearch); void loadHistory(true, historySearch) }} placeholder="ค้นหาสินค้า, SKU, UPC หรือร้านค้า" />
           {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูประวัติของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดประวัติจาก D1</p> : null}
           {historyMessage ? <p className="status-message">{historyMessage}</p> : null}
-          <div className="history-list">{historyItems.map((item) => <HistoryCard key={item.id} item={item} />)}</div>
+          <div className="history-list">{historyItems.map((item) => <HistoryCard key={item.id} item={item} onOpen={() => openDetail('purchase', item.id)} />)}</div>
           {account && isOnline && !isLoadingHistory && historyItems.length === 0 ? <p className="status-message">ยังไม่มีรายการซื้อที่ตรงกับการค้นหา</p> : null}
           {historyCursor ? <button className="secondary-button load-more" onClick={() => void loadHistory(false)} disabled={isLoadingHistory}>{isLoadingHistory ? 'กำลังโหลด…' : 'ดูรายการเพิ่มเติม'}</button> : null}
           {isLoadingHistory && historyItems.length === 0 ? <p className="status-message">กำลังโหลดประวัติ…</p> : null}
         </section> : null}
 
-        {activeView === 'products' ? <section className="content-panel" aria-labelledby="products-title">
+        {activeView === 'products' && !detail ? <section className="content-panel" aria-labelledby="products-title">
           <h2 id="products-title">สินค้าของฉัน</h2>
           <p className="status-message">สินค้าที่คุณเคยบันทึกรายการซื้อ พร้อมยอดใช้จ่ายสะสม</p>
           <SearchForm value={productsSearch} setValue={setProductsSearch} onSubmit={() => { setProductsQuery(productsSearch); void loadMyProducts(true, productsSearch) }} placeholder="ค้นหาชื่อสินค้า, SKU, UPC หรือแบรนด์" />
           {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูคลังสินค้าของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดคลังสินค้าจาก D1</p> : null}
           {productsMessage ? <p className="status-message">{productsMessage}</p> : null}
-          <div className="product-library">{myProducts.map((item) => <MyProductCard key={item.id} item={item} />)}</div>
+          <div className="product-library">{myProducts.map((item) => <MyProductCard key={item.id} item={item} onOpen={() => openDetail('product', item.id)} />)}</div>
           {account && isOnline && !isLoadingProducts && myProducts.length === 0 ? <p className="status-message">ยังไม่มีสินค้าที่เคยซื้อ</p> : null}
           {productsCursor ? <button className="secondary-button load-more" onClick={() => void loadMyProducts(false)} disabled={isLoadingProducts}>{isLoadingProducts ? 'กำลังโหลด…' : 'ดูสินค้าเพิ่มเติม'}</button> : null}
           {isLoadingProducts && myProducts.length === 0 ? <p className="status-message">กำลังโหลดสินค้า…</p> : null}
@@ -575,6 +618,7 @@ type PurchaseViewProps = {
   isSavingProduct: boolean; lookupProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>; saveManualProduct: (event: FormEvent<HTMLFormElement>) => Promise<void>
   beginManualEntry: () => void
   quantity: string; setQuantity: (value: string) => void; price: string; setPrice: (value: string) => void; storeName: string; setStoreName: (value: string) => void
+  purchasedAt: string; setPurchasedAt: (value: string) => void; purchaseNote: string; setPurchaseNote: (value: string) => void
   isSavingPurchase: boolean; purchaseMessage: string | null; savePurchase: (event: FormEvent<HTMLFormElement>) => Promise<void>
 }
 
@@ -604,7 +648,7 @@ function PurchaseView(props: PurchaseViewProps) {
     {props.lookupMessage ? <p className="status-message" role="status">{props.lookupMessage}</p> : null}
     {props.showManualEntry ? <form className="manual-form" onSubmit={(event) => void props.saveManualProduct(event)}><strong>เพิ่มสินค้าเอง</strong><label>ชื่อสินค้า<input value={props.manualName} onChange={(event) => props.setManualName(event.target.value)} maxLength={200} required /></label><label>แบรนด์ (ไม่บังคับ)<input value={props.manualBrand} onChange={(event) => props.setManualBrand(event.target.value)} maxLength={100} /></label><button className="secondary-button" disabled={props.isSavingProduct}>{props.isSavingProduct ? 'กำลังเพิ่ม…' : 'บันทึกสินค้าเอง'}</button></form> : null}
     {props.product ? <div className="product-result">{props.product.imageUrl ? <img src={props.product.imageUrl} alt="" /> : <div className="image-placeholder" aria-hidden="true">สินค้า</div>}<div><p className="source-badge">{props.product.source === 'bigc' ? 'Big C import' : 'SmartCart database'}</p><h3>{props.product.name}</h3><p>{[props.product.brand, props.product.packageSize].filter(Boolean).join(' · ')}</p><p>SKU: {props.product.sku ?? props.product.id}</p><p>{props.product.upc ? `UPC / Barcode: ${props.product.upc}` : 'ยังไม่มี UPC / Barcode — รหัสสินค้า Big C ไม่ใช่บาร์โค้ด'}</p>{props.product.sourceProductId ? <p>รหัสสินค้า Big C: {props.product.sourceProductId}</p> : null}{props.product.sourcePriceMinor !== null ? <p><strong>{formatBaht(props.product.sourcePriceMinor)} ราคาอ้างอิง</strong><br /><small>ไม่ใช่การรับประกันราคาปัจจุบัน กรุณายืนยันราคาที่ซื้อจริง</small></p> : null}{props.product.fetchedAt ? <p><small>อ่านข้อมูลเมื่อ {formatDate(props.product.fetchedAt)}</small></p> : null}</div></div> : null}
-    {props.product ? <form className="purchase-form" onSubmit={(event) => void props.savePurchase(event)}><label>ราคาที่ซื้อจริง (บาท)<input value={props.price} onChange={(event) => props.setPrice(event.target.value)} inputMode="decimal" required /></label><label>จำนวน<input value={props.quantity} onChange={(event) => props.setQuantity(event.target.value)} inputMode="decimal" required /></label><label className="full-width">ร้านค้า (ไม่บังคับ)<input value={props.storeName} onChange={(event) => props.setStoreName(event.target.value)} maxLength={80} /></label><button className="primary-button full-width" disabled={props.isSavingPurchase}>{props.isSavingPurchase ? 'กำลังบันทึก…' : 'บันทึกรายการซื้อ'}</button>{props.purchaseMessage ? <p className="status-message full-width">{props.purchaseMessage}</p> : null}</form> : null}
+    {props.product ? <form className="edit-purchase" onSubmit={(event) => void props.savePurchase(event)}><PurchaseFieldInputs disabled={props.isSavingPurchase} fields={{ price: props.price, quantity: props.quantity, purchasedAt: props.purchasedAt, storeName: props.storeName, note: props.purchaseNote }} onChange={fields => { props.setPrice(fields.price); props.setQuantity(fields.quantity); props.setPurchasedAt(fields.purchasedAt); props.setStoreName(fields.storeName); props.setPurchaseNote(fields.note) }} /><button className="primary-button" disabled={props.isSavingPurchase}>{props.isSavingPurchase ? 'กำลังบันทึก…' : 'บันทึกรายการซื้อ'}</button>{props.purchaseMessage ? <p className="status-message" role="status">{props.purchaseMessage}</p> : null}</form> : null}
   </section>
 }
 
@@ -612,19 +656,21 @@ function SearchForm({ value, setValue, onSubmit, placeholder }: { value: string;
   return <form className="search-form" onSubmit={(event) => { event.preventDefault(); onSubmit() }}><label htmlFor="history-search">ค้นหา</label><div className="input-row"><input id="history-search" value={value} onChange={(event) => setValue(event.target.value)} maxLength={80} placeholder={placeholder} /><button className="primary-button">ค้นหา</button></div></form>
 }
 
-function HistoryCard({ item }: { item: PurchaseHistoryItem }) {
+function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: () => void }) {
   return <article className="history-card">
     {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
     <div><strong>{item.productName}</strong><p>{[item.productBrand, `SKU: ${item.productSku ?? item.productId}`, item.productUpc ? `UPC: ${item.productUpc}` : null, item.storeName].filter(Boolean).join(' · ')}</p><small>{formatDate(item.purchasedAt)} · {item.quantity} ชิ้น × {formatBaht(item.unitPriceMinor)}</small></div>
     <strong className="history-total">{formatBaht(item.totalMinor)}</strong>
+    <button type="button" className="secondary-button card-detail-link" onClick={onOpen} aria-label={`ดูรายละเอียดรายการซื้อ ${item.productName}`}>ดูรายละเอียด / แก้ไข</button>
   </article>
 }
 
-function MyProductCard({ item }: { item: MyProductItem }) {
+function MyProductCard({ item, onOpen }: { item: MyProductItem; onOpen: () => void }) {
   return <article className="library-card">
     {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
     <div><strong>{item.name}</strong><p>{[item.brand, `SKU: ${item.sku ?? item.id}`, item.upc ? `UPC: ${item.upc}` : null].filter(Boolean).join(' · ')}</p><small>ซื้อ {item.purchaseCount} ครั้ง · ล่าสุด {formatDate(item.lastPurchasedAt)}</small></div>
     <strong className="history-total">{formatBaht(item.totalSpentMinor)}</strong>
+    <button type="button" className="secondary-button card-detail-link" onClick={onOpen} aria-label={`ดูรายละเอียดสินค้า ${item.name}`}>ดูรายละเอียดสินค้า</button>
   </article>
 }
 

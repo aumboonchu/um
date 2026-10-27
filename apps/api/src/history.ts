@@ -1,6 +1,6 @@
 import type { AuthEnv } from './auth'
 
-type PurchaseRow = {
+export type PurchaseRow = {
   id: string
   product_id: string
   product_name: string
@@ -75,7 +75,7 @@ const MAX_LIMIT = 50
 export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv): Promise<Page<PurchaseHistoryItem>> {
   const { limit, search, cursor } = parsePage(url)
   const bindings: Array<string | number> = [userId]
-  const conditions = ['p.user_id = ?']
+  const conditions = ['p.user_id = ?', 'p.deleted_at IS NULL']
 
   if (search) {
     const like = `%${escapeLike(search)}%`
@@ -112,7 +112,7 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
 export async function listMyProducts(url: URL, userId: string, env: AuthEnv): Promise<Page<MyProductItem>> {
   const { limit, search, cursor } = parsePage(url)
   const bindings: Array<string | number> = [userId]
-  const conditions = ['purchases.user_id = ?']
+  const conditions = ['purchases.user_id = ?', 'purchases.deleted_at IS NULL']
 
   if (search) {
     const like = `%${escapeLike(search)}%`
@@ -182,7 +182,7 @@ function escapeLike(value: string): string {
   return value.replaceAll('!', '!!').replaceAll('%', '!%').replaceAll('_', '!_')
 }
 
-function toPurchaseHistoryItem(row: PurchaseRow): PurchaseHistoryItem {
+export function toPurchaseHistoryItem(row: PurchaseRow): PurchaseHistoryItem {
   return {
     id: row.id,
     productId: row.product_id,
@@ -213,4 +213,3 @@ function toMyProductItem(row: ProductRow): MyProductItem {
     lastPurchasedAt: row.last_purchased_at,
   }
 }
-

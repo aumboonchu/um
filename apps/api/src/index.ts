@@ -19,6 +19,7 @@ import { confirmImageProduct, ImageProductError } from './image-product'
 import { PurchaseInputError, PurchaseProductNotFoundError, createPurchase } from './purchases'
 import { SyncInputError, syncOperations } from './sync'
 import { HistoryInputError, listMyProducts, listPurchaseHistory } from './history'
+import { changePurchase, dashboard, productDetail, purchaseDetail, PurchaseManagementError } from './purchase-management'
 
 type Bindings = { Bindings: AuthEnv }
 
@@ -209,6 +210,29 @@ app.post('/api/v1/sync', async (context) => {
   }
 })
 
+app.get('/api/v1/dashboard', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  return context.json({ data: await dashboard(new URL(context.req.url), account.id, context.env) })
+})
+
+app.get('/api/v1/products/:id/detail', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  return context.json({ data: await productDetail(context.req.param('id'), account.id, context.env) })
+})
+
+app.on(['GET', 'PATCH', 'DELETE'], '/api/v1/purchases/:id', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  if (context.req.method !== 'GET' && context.req.header('Origin') !== context.env.APP_ORIGIN) {
+    return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
+  }
+  const data = context.req.method === 'GET' ? await purchaseDetail(context.req.param('id'), account.id, context.env)
+    : await changePurchase(context.req.raw, context.req.param('id'), account.id, context.env)
+  return context.json({ data })
+})
+
 app.get('/auth/google/start', async (context) => startGoogleLogin(context.req.raw, context.env))
 
 app.get('/auth/google/callback', async (context) => completeGoogleLogin(context.req.raw, context.env))
@@ -231,6 +255,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof PurchaseManagementError) return context.json({ error: { code: error.code, message: error.code } }, error.status)
   const requestId = getRequestId(context.req.raw)
   console.error(
     JSON.stringify({
