@@ -11,15 +11,23 @@ export default function BarcodeScanner({ disabled = false, onDetected }: Barcode
   const trigger = useRef<HTMLButtonElement>(null)
   const video = useRef<HTMLVideoElement>(null)
   const panel = useRef<HTMLDivElement>(null)
+  const restoreFocus = useRef(false)
   const onDetectedRef = useRef(onDetected)
   onDetectedRef.current = onDetected
 
   function close(message: string) {
+    restoreFocus.current = true
     setOpen(false)
     setFailed(false)
     setMessage(message)
-    trigger.current?.focus({ preventScroll: true })
   }
+
+  useEffect(() => {
+    if (!open && restoreFocus.current) {
+      restoreFocus.current = false
+      trigger.current?.focus({ preventScroll: true })
+    }
+  }, [open])
 
   useEffect(() => {
     if (disabled) { setOpen(false); setMessage(''); setFailed(false) }
@@ -39,10 +47,10 @@ export default function BarcodeScanner({ disabled = false, onDetected }: Barcode
       },
       onError: (message) => {
         if (!active) return
+        restoreFocus.current = true
         setOpen(false)
         setFailed(true)
         setMessage(message)
-        trigger.current?.focus({ preventScroll: true })
       },
     })
     const hide = () => { if (document.hidden) { scan.stop(); close('หยุดสแกนและปิดกล้องแล้ว เนื่องจากสลับออกจากหน้านี้ กดสแกนอีกครั้งได้') } }
