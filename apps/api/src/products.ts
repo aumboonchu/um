@@ -131,13 +131,14 @@ async function insertLinkedProduct(candidate: BigCLinkCandidate, existingId: str
   await env.DB.batch(statements)
 }
 
-export async function lookupProductByUpc(upc: string, env: AuthEnv): Promise<Product> {
+export async function lookupProductByUpc(upc: string, env: AuthEnv, databaseOnly = false): Promise<Product> {
   if (!isValidUpc(upc)) {
     throw new ProductLookupError('INVALID_UPC', 400, false)
   }
 
   const cached = await findProduct(upc, env)
   if (cached) return cached
+  if (databaseOnly) throw new ProductLookupError('PRODUCT_NOT_FOUND', 404, false)
 
   const candidate = await lookupBigC(upc)
   if (!candidate) {
@@ -167,9 +168,9 @@ export async function createManualProduct(request: Request, env: AuthEnv): Promi
     await env.DB.prepare(
       `INSERT INTO products
         (id, sku, upc, name, brand, package_size, unit, category, image_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
     )
-      .bind(crypto.randomUUID(), `UPC-${input.upc}`, input.upc, input.name, input.brand, now, now)
+      .bind(crypto.randomUUID(), `UPC-${input.upc}`, input.upc, input.name, input.brand, input.packageSize, now, now)
       .run()
   } catch (error) {
     const concurrentProduct = await findProduct(input.upc, env)
@@ -522,15 +523,16 @@ function isChallengePage(document: string): boolean {
   return /cf-chl|challenge-platform|enable javascript and cookies to continue/i.test(document)
 }
 
-function parseManualProductInput(value: unknown): { upc: string; name: string; brand: string | null } {
+function parseManualProductInput(value: unknown): { upc: string; name: string; brand: string | null; packageSize: string | null } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ManualProductInputError()
   const record = value as Record<string, unknown>
   const upc = textValue(record.upc)
   const name = textValue(record.name)
   const brand = textValue(record.brand)
-  if (!upc || !isValidUpc(upc) || !name || name.length > 200 || (brand && brand.length > 100)) {
+  const packageSize = textValue(record.packageSize)
+  if (!upc || !isValidUpc(upc) || !name || name.length > 200 || (brand && brand.length > 100)
+    || (packageSize && packageSize.length > 100) || (record.packageSize != null && typeof record.packageSize !== 'string')) {
     throw new ManualProductInputError()
   }
-  return { upc, name, brand }
+  return { upc, name, brand, packageSize }
 }
-

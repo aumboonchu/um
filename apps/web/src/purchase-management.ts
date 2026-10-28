@@ -1,7 +1,7 @@
 import { apiFetch } from './auth-client'
 
 export type PurchaseItem = { id: string; productId: string; productName: string; productSku: string; productUpc: string | null; productBrand: string | null; imageUrl: string | null; storeName: string | null; unitPriceMinor: number; quantity: number; totalMinor: number; purchasedAt: string; note: string | null }
-export type PurchaseDetail = PurchaseItem & { revision: number; updatedAt: string; packageSize: string | null }
+export type PurchaseDetail = PurchaseItem & { revision: number; updatedAt: string; packageSize: string | null; shoppingRoundId?: string | null }
 export type Dashboard = { month: string; start: string; end: string; totalSpentMinor: number; purchaseCount: number; productCount: number; averageMinor: number; recentPurchases: PurchaseItem[] }
 export type ProductDetail = { id: string; sku: string; upc: string | null; name: string; brand: string | null; packageSize: string | null; unit: string | null; category: string | null; imageUrl: string | null; purchaseCount: number; totalSpentMinor: number; totalQuantity: number; minimumPriceMinor: number | null; maximumPriceMinor: number | null; lastPurchasedAt: string | null; recentPurchases: PurchaseItem[] }
 export type PurchaseFields = { price: string; quantity: string; purchasedAt: string; storeName: string; note: string }
@@ -30,6 +30,7 @@ function validProduct(v: unknown): v is ProductDetail { return record(v) && type
 
 export function managementMessage(code: string): string {
   switch (code) {
+    case 'ROUND_LOCKED': return 'รายการอยู่ในรอบที่ชำระแล้ว ไม่เปิดให้แก้หรือลบรายชิ้น เพื่อคงยอดรายงานทั้งรอบ'
     case 'UNAUTHENTICATED': return 'กรุณาเข้าสู่ระบบด้วยบัญชีเดิมก่อนตรวจสอบรายการ'
     case 'UNTRUSTED_ORIGIN': return 'กรุณาเปิด SmartCart จากหน้าเว็บหลัก'
     case 'PURCHASE_NOT_FOUND': return 'ไม่พบรายการซื้อของบัญชีนี้ รายการอาจถูกลบไปแล้ว'
@@ -135,7 +136,7 @@ export async function sendChange(account: string, attempt: ChangeAttempt, send: 
       return { status: 'success', cleanupPending: !cleared }
     }
     const code = errorCode(body)
-    if ((response.status === 400 || response.status === 404 || response.status === 409) && ['INVALID_PURCHASE_CHANGE', 'PURCHASE_NOT_FOUND', 'PURCHASE_CONFLICT'].includes(code)) {
+    if ((response.status === 400 || response.status === 404 || response.status === 409) && ['INVALID_PURCHASE_CHANGE', 'PURCHASE_NOT_FOUND', 'PURCHASE_CONFLICT', 'ROUND_LOCKED'].includes(code)) {
       if (!clearChange(account, attempt)) throw new Error('PENDING_STORAGE_UNAVAILABLE')
       return { status: 'error', code, message: managementMessage(code) }
     }

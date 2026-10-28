@@ -20,6 +20,7 @@ import { PurchaseInputError, PurchaseProductNotFoundError, createPurchase } from
 import { SyncInputError, syncOperations } from './sync'
 import { HistoryInputError, listMyProducts, listPurchaseHistory } from './history'
 import { changePurchase, dashboard, productDetail, purchaseDetail, PurchaseManagementError } from './purchase-management'
+import { checkoutRound, listRounds, roundDetail, ShoppingRoundError } from './shopping-rounds'
 
 type Bindings = { Bindings: AuthEnv }
 
@@ -68,7 +69,7 @@ app.get('/api/v1/health', (context) => {
 
 app.get('/api/v1/products/upc/:upc', async (context) => {
   try {
-    const product = await lookupProductByUpc(context.req.param('upc'), context.env)
+    const product = await lookupProductByUpc(context.req.param('upc'), context.env, context.req.query('databaseOnly') === '1')
     return context.json({ data: product, meta: { requestId: getRequestId(context.req.raw), source: product.source } })
   } catch (error) {
     if (error instanceof ProductLookupError) {
@@ -210,6 +211,23 @@ app.post('/api/v1/sync', async (context) => {
   }
 })
 
+app.post('/api/v1/rounds/checkout', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  if (!isTrustedOrigin(context.req.raw, context.env)) return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
+  return context.json({ data: await checkoutRound(context.req.raw, account.id, context.env) })
+})
+app.get('/api/v1/rounds', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  return context.json({ data: await listRounds(new URL(context.req.url), account.id, context.env) })
+})
+app.get('/api/v1/rounds/:id', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  return context.json({ data: await roundDetail(context.req.param('id'), account.id, context.env) })
+})
+
 app.get('/api/v1/dashboard', async (context) => {
   const account = await currentAccount(context.req.raw, context.env)
   if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
@@ -255,6 +273,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof ShoppingRoundError) return context.json({ error: { code: error.code } }, error.status)
   if (error instanceof PurchaseManagementError) return context.json({ error: { code: error.code, message: error.code } }, error.status)
   const requestId = getRequestId(context.req.raw)
   console.error(

@@ -13,6 +13,14 @@ type ScanCallbacks = {
 }
 
 /** Preserve leading zeroes. Do not accept QR text, retailer IDs, or unchecked digits. */
+export function normalizeBarcode(value: string): string | null {
+  const text = value.trim()
+  if (!/^(?:\d{8}|\d{12}|\d{13}|\d{14})$/.test(text) || /^(\d)\1+$/.test(text)) return null
+  const digits = [...text].map(Number), check = digits.pop()!
+  const sum = digits.reverse().reduce((total, digit, index) => total + digit * (index % 2 === 0 ? 3 : 1), 0)
+  return (10 - sum % 10) % 10 === check ? text : null
+}
+
 export function scannedGtin({ text, format }: BarcodeReading): string | null {
   const length = { EAN_13: 13, EAN_8: 8, UPC_A: 12 }[format]
   if (!length || !new RegExp(`^\\d{${length}}$`).test(text) || /^(\d)\1+$/.test(text)) return null

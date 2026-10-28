@@ -376,3 +376,20 @@ input:focus { outline: 3px solid #bde7d1; border-color: #0f945c; }
   .history-card img, .library-card img, .small-image-placeholder { width: 44px; height: 44px; }
   .history-total { grid-column: 2; text-align: left; }
 }
+/* Scan-first shopping rounds; draft and checkout receipt are distinct surfaces. */
+[hidden] { display: none !important; }
+.account-details { width: 100%; }
+.account-details summary { cursor: pointer; color: #166549; font-weight: 600; }
+.account-details > div { display: grid; gap: .7rem; margin-top: 1rem; }
+.round-cart, .round-receipt { margin-top: 1.5rem; padding: 1.1rem; background: #fff; border: 1px solid #d5e2dc; border-radius: 16px; }
+.round-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; padding: 1rem 0; border-bottom: 1px solid #e5eee9; overflow-wrap: anywhere; }
+.round-line small { display: block; color: #5c6e65; margin-top: .3rem; }
+.round-line .detail-actions { grid-column: 1 / -1; }
+.round-total { display: flex; align-items: center; justify-content: space-between; gap: .8rem; font-size: 1.25rem; padding: 1rem 0; }
+.round-total strong { color: #0b8357; font-size: 1.5rem; }
+.checkout-button, .checkout-form > button { width: 100%; margin-top: .7rem; min-height: 48px; }
+.checkout-form select { width: 100%; padding: .8rem; border: 1px solid #b9c8c0; border-radius: 12px; background: #fff; font: inherit; color: inherit; }
+.round-id { overflow-wrap: anywhere; font-size: .85rem; color: #5c6e65; }
+.shopping-journey .manual-form, .shopping-journey .lookup-form { margin-bottom: 1rem; }
+.round-reports .summary-purchase, .round-reports .pending-change button { width: 100%; text-align: left; }
+@media (max-width: 480px) { .round-cart, .round-receipt { padding: .8rem; } .round-line { grid-template-columns: minmax(0, 1fr); } .round-total { flex-wrap: wrap; } }

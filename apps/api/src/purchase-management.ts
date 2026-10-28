@@ -2,16 +2,16 @@ import type { AuthEnv } from './auth'
 import { listPurchaseHistory, toPurchaseHistoryItem, type PurchaseRow } from './history'
 
 export class PurchaseManagementError extends Error {
-  constructor(readonly code: 'INVALID_PURCHASE_CHANGE' | 'INVALID_MONTH' | 'PURCHASE_NOT_FOUND' | 'PRODUCT_NOT_FOUND' | 'PURCHASE_CONFLICT' | 'OPERATION_CONFLICT', readonly status: 400 | 404 | 409) { super(code) }
+  constructor(readonly code: 'INVALID_PURCHASE_CHANGE' | 'INVALID_MONTH' | 'PURCHASE_NOT_FOUND' | 'PRODUCT_NOT_FOUND' | 'PURCHASE_CONFLICT' | 'OPERATION_CONFLICT' | 'ROUND_LOCKED', readonly status: 400 | 404 | 409) { super(code) }
 }
-type DetailRow = PurchaseRow & { revision: number; updated_at: string; package_size: string | null }
+type DetailRow = PurchaseRow & { revision: number; updated_at: string; package_size: string | null; shopping_round_id: string | null }
 type Receipt = { purchase_id: string; action: 'edit' | 'delete'; payload_hash: string; result_revision: number }
 export type MutationResult = { operationId: string; purchaseId: string; action: 'edit' | 'delete'; revision: number }
 type EditFields = { unitPriceMinor: number; quantity: number; purchasedAt: string; storeName: string | null; note: string | null }
 
 const SELECT_PURCHASE = `SELECT p.id, p.product_id, products.name AS product_name, products.sku AS product_sku,
   products.upc AS product_upc, products.brand AS product_brand, products.package_size, products.image_url,
-  stores.name AS store_name, p.unit_price_minor, p.quantity, p.total_minor, p.purchased_at, p.note, p.revision, p.updated_at
+  stores.name AS store_name, p.unit_price_minor, p.quantity, p.total_minor, p.purchased_at, p.note, p.revision, p.updated_at, p.shopping_round_id
   FROM purchases p JOIN products ON products.id = p.product_id
   LEFT JOIN stores ON stores.id = p.store_id AND stores.user_id = p.user_id`;
 
@@ -41,7 +41,7 @@ export async function purchaseDetail(id: string, userId: string, env: AuthEnv) {
   const row = await env.DB.prepare(`${SELECT_PURCHASE} WHERE p.id = ? AND p.user_id = ? AND p.deleted_at IS NULL`)
     .bind(idValue(id), userId).first<DetailRow>()
   if (!row) throw new PurchaseManagementError('PURCHASE_NOT_FOUND', 404)
-  return { ...toPurchaseHistoryItem(row), revision: row.revision, updatedAt: row.updated_at, packageSize: row.package_size }
+  return { ...toPurchaseHistoryItem(row), revision: row.revision, updatedAt: row.updated_at, packageSize: row.package_size, shoppingRoundId: row.shopping_round_id }
 }
 
 export async function productDetail(id: string, userId: string, env: AuthEnv) {
@@ -123,9 +123,10 @@ export async function changePurchase(request: Request, id: string, userId: strin
   const existing = await receipt(userId, operationId, env)
   if (existing) return receiptResult(existing, operationId, hash)
   // Check ownership before any store or mutation can be written.
-  const current = await env.DB.prepare('SELECT revision, deleted_at FROM purchases WHERE id = ? AND user_id = ?')
-    .bind(id, userId).first<{ revision: number; deleted_at: string | null }>()
+  const current = await env.DB.prepare('SELECT revision, deleted_at, shopping_round_id FROM purchases WHERE id = ? AND user_id = ?')
+    .bind(id, userId).first<{ revision: number; deleted_at: string | null; shopping_round_id: string | null }>()
   if (!current) throw new PurchaseManagementError('PURCHASE_NOT_FOUND', 404)
+  if (current.shopping_round_id) throw new PurchaseManagementError('ROUND_LOCKED', 409)
   if (current.deleted_at || current.revision !== revision) throw new PurchaseManagementError('PURCHASE_CONFLICT', 409)
   const now = new Date().toISOString(), statements: D1PreparedStatement[] = []
   if (fields?.storeName) statements.push(env.DB.prepare(`INSERT INTO stores (id, user_id, name, created_at, updated_at)

@@ -13,12 +13,13 @@ export type ImageImportProps = {
   canImport: boolean
   onProduct: (product: ConfirmedImageProduct) => void
   onReset?: () => void
+  scannedUpc?: string | null
 }
 
 type Stage = 'idle' | 'preparing' | 'extracting' | 'review' | 'extract-error' | 'saving' | 'save-error' | 'uncertain' | 'success'
 type Feedback = { kind: 'info' | 'error' | 'uncertain' | 'success'; title: string; message: string; code?: string }
 
-export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onReset }: ImageImportProps) {
+export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onReset, scannedUpc = null }: ImageImportProps) {
   const id = useId()
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -173,7 +174,8 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
       busyRef.current = false
       if (result.status === 'success') {
         fingerprint.current = result.imageSha256
-        setFields(fieldsFromImageDraft(result.draft))
+        const readFields = fieldsFromImageDraft(result.draft)
+        setFields({ ...readFields, upc: readFields.upc || scannedUpc || '' })
         setWarnings(result.warnings)
         setHasReview(true)
         setStage('review')
@@ -198,7 +200,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
 
   function beginManualReview() {
     if (!canImport || busyRef.current || !preparedImage.current || !fingerprint.current || attempt.current) return
-    setFields(emptyImageFields())
+    setFields({ ...emptyImageFields(), upc: scannedUpc ?? '' })
     setWarnings([])
     setHasReview(true)
     setChecked(false)
@@ -218,6 +220,10 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     if (!canImport || !accountId || busyRef.current || !hasReview) return
     if (!checked) {
       setFeedback({ kind: 'error', title: 'กรุณาตรวจสอบและยืนยันข้อมูลก่อน', message: 'ติ๊กยืนยันหลังตรวจชื่อ ราคา และรหัสสินค้าแล้ว จึงจะบันทึกเป็น SKU ได้' })
+      return
+    }
+    if (!attempt.current && scannedUpc && fields.upc !== scannedUpc) {
+      setFeedback({ kind: 'error', title: 'บาร์โค้ดไม่ตรงกับที่สแกน', message: `รอบนี้กำลังเพิ่มสินค้าบาร์โค้ด ${scannedUpc} กรุณาตรวจว่าภาพเป็นสินค้าตัวเดียวกัน และยืนยันบาร์โค้ดให้ตรงก่อนบันทึก` })
       return
     }
     try { attempt.current ??= createImageImportAttempt(fields, fingerprint.current) }
@@ -281,6 +287,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
 
   return <section className="image-import" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`}>เพิ่มสินค้าจากภาพ</h3>
+    {scannedUpc ? <p className="image-import-notice">บาร์โค้ดจากการสแกน: {scannedUpc} — จะเติมให้เมื่อภาพไม่แสดงบาร์โค้ด กรุณาตรวจว่าภาพตรงกับสินค้าที่สแกนก่อนยืนยัน</p> : null}
     <p className="image-import-notice">รองรับภาพหน้าสินค้าจาก Big C และแอป Makro Pro — แคปภาพให้เห็นชื่อ ขนาดบรรจุ และราคา แล้วเลือกภาพด้านล่าง</p>
     <p className="image-import-field-help">สินค้าขายเป็นแพ็ก: บันทึกราคาต่อแพ็กและขนาดให้ครบ เมื่อนำไปบันทึกรายการซื้อ จำนวน 1 หมายถึง 1 แพ็ก ไม่ใช่จำนวนชิ้นภายในแพ็ก</p>
     <p id={`${id}-privacy`} className="image-import-notice">ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน</p>

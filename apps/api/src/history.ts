@@ -76,6 +76,7 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
   const { limit, search, cursor } = parsePage(url)
   const bindings: Array<string | number> = [userId]
   const conditions = ['p.user_id = ?', 'p.deleted_at IS NULL']
+  if (url.searchParams.get('legacyOnly') === '1') conditions.push('p.shopping_round_id IS NULL')
 
   if (search) {
     const like = `%${escapeLike(search)}%`
