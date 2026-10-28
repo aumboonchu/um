@@ -281,6 +281,8 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
 
   return <section className="image-import" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`}>เพิ่มสินค้าจากภาพ</h3>
+    <p className="image-import-notice">รองรับภาพหน้าสินค้าจาก Big C และแอป Makro Pro — แคปภาพให้เห็นชื่อ ขนาดบรรจุ และราคา แล้วเลือกภาพด้านล่าง</p>
+    <p className="image-import-field-help">สินค้าขายเป็นแพ็ก: บันทึกราคาต่อแพ็กและขนาดให้ครบ เมื่อนำไปบันทึกรายการซื้อ จำนวน 1 หมายถึง 1 แพ็ก ไม่ใช่จำนวนชิ้นภายในแพ็ก</p>
     <p id={`${id}-privacy`} className="image-import-notice">ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน</p>
     <label htmlFor={`${id}-file`}>เลือกภาพหน้าจอหรือรูปสินค้า (JPG / PNG / WebP ไม่เกิน 10 MB)</label>
     <input ref={fileInput} id={`${id}-file`} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} disabled={!canImport || busy || locked} aria-describedby={`${id}-privacy`} />
@@ -307,14 +309,14 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
         {warnings.length > 0 ? <ul className="image-import-warnings" aria-label="ข้อควรตรวจสอบจากการอ่านภาพ">{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
         <label>ชื่อสินค้า<input value={fields.name} onChange={(event) => editField('name', event.target.value)} maxLength={200} required /></label>
         <label>แบรนด์ (ไม่บังคับ)<input value={fields.brand} onChange={(event) => editField('brand', event.target.value)} maxLength={100} /></label>
-        <label>ขนาดบรรจุ (ไม่บังคับ)<input value={fields.packageSize} onChange={(event) => editField('packageSize', event.target.value)} maxLength={100} /></label>
+        <label>ขนาดบรรจุ / จำนวนชิ้นต่อแพ็ก (ไม่บังคับ)<input value={fields.packageSize} onChange={(event) => editField('packageSize', event.target.value)} maxLength={100} placeholder="เช่น 24.6 g x 12" /></label>
         <label>ราคาอ้างอิงจากภาพ (บาท)<input value={fields.sourcePrice} onChange={(event) => editField('sourcePrice', event.target.value)} inputMode="decimal" placeholder="เว้นว่างหากไม่มีราคา" /></label>
-        <p className="image-import-field-help">ราคาในภาพไม่ใช่การรับประกันราคาปัจจุบัน และยังไม่ใช่ราคาของรายการซื้อ</p>
+        <p className="image-import-field-help">ใช้ราคาต่อหน่วยขาย เช่น แพ็ก 12 ชิ้น ราคา 45 บาท ให้ใส่ 45 ไม่ใช่ราคาต่อชิ้น 3.75 หรือราคาขีดฆ่า ราคาในภาพไม่ใช่การรับประกันราคาปัจจุบัน และยังไม่ใช่ราคาของรายการซื้อ</p>
         <label>UPC / EAN บาร์โค้ด (ไม่บังคับ)<input value={fields.upc} onChange={(event) => editField('upc', event.target.value)} inputMode="numeric" maxLength={14} placeholder="ใส่เมื่อเห็นบาร์โค้ดชัดเจนเท่านั้น" /></label>
         <BarcodeScanner disabled={!canImport || busy || locked} onDetected={(value) => editField('upc', value)} />
-        <p className="image-import-field-help">หากภาพไม่มีบาร์โค้ด ให้เว้นว่าง ห้ามใช้รหัสสินค้า Big C แทนบาร์โค้ด</p>
-        <label>รหัสสินค้าที่แสดงบนภาพ (ไม่บังคับ)<input value={fields.retailerCode} onChange={(event) => editField('retailerCode', event.target.value)} maxLength={80} placeholder="เช่น 60560" /></label>
-        <p className="image-import-field-help">เก็บไว้เป็นข้อมูลอ้างอิงเท่านั้น ไม่ใช่ UPC และไม่ใช้ยืนยันรหัสในลิงก์ Big C</p>
+        <p className="image-import-field-help">หากภาพไม่มีบาร์โค้ด ให้เว้นว่าง ห้ามใช้รหัสสินค้า Big C หรือ Code ของ Makro Pro แทนบาร์โค้ด</p>
+        <label>รหัสสินค้าร้าน / Code ที่แสดงบนภาพ (ไม่บังคับ)<input value={fields.retailerCode} onChange={(event) => editField('retailerCode', event.target.value)} maxLength={80} placeholder="เช่น 60560 หรือ 197584" /></label>
+        <p className="image-import-field-help">เก็บไว้เป็นข้อมูลอ้างอิงของรายการนำเข้าเท่านั้น ไม่ใช่ UPC และไม่ใช้ยืนยันตัวสินค้าระหว่างร้าน</p>
         <label className="image-import-confirmation"><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} required /><span>ฉันตรวจสอบชื่อ ราคา และรหัสแล้ว ยืนยันบันทึกข้อมูลนี้เป็นสินค้า</span></label>
       </fieldset>
       {!locked ? <div className="image-import-actions"><button type="submit" className="primary-button" disabled={!canImport || busy || !checked}>ยืนยันและบันทึกสินค้าเป็น SKU</button><button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport || busy}>ยกเลิก / เลือกภาพใหม่</button></div> : null}

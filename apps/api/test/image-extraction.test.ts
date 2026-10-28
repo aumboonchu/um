@@ -7,11 +7,19 @@ beforeAll(() => applyD1Migrations(env.DB, env.TEST_MIGRATIONS))
 // Transcribed observed output from the user's screenshot; no original image is stored in the repo.
 const observed = { name: 'โค้ก น้ำอัดลม รสออริจินัล สูตรน้ำตาลน้อยกว่า 1.95 ล.', brand: 'Coca-Cola',
   packageSize: '1.95 ล.', sourcePriceMinor: 3700, upc: null, retailerCode: '60560' }
+// Expected fields transcribed from the supplied Makro Pro screenshot, not a live AI assertion.
+const makro = { name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12', brand: 'OREO',
+  packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: null, retailerCode: '197584' }
 const jpegHeader = new Uint8Array([255, 216, 255, 224, 0, 16])
 
 describe('image extraction validation', () => {
   it('keeps retailer code separate and uses the extracted product price, not a discount banner', () => {
     expect(parseImageDraft(`\`\`\`json\n${JSON.stringify(observed)}\n\`\`\``)).toEqual(observed)
+  })
+
+  it('preserves a Makro Pro multipack and pack price without promoting Code to UPC', () => {
+    expect(parseImageDraft(JSON.stringify(makro))).toEqual(makro)
+    expect(parseImageDraft(JSON.stringify({ ...makro, upc: '197584' })).upc).toBeNull()
   })
 
   it.each(['not json', '[]', '{}', '{"name":null}', 'x'.repeat(8001)])('rejects unreadable output', (value) => {
@@ -57,6 +65,18 @@ describe('image extraction validation', () => {
 })
 
 describe('vision call', () => {
+  it('instructs the model to distinguish Makro pack price, per-unit price, old price and shop Code', async () => {
+    const run = vi.fn(async (_model: string, _inputs: ChatCompletionsInput) => ({ choices: [{ message: { content: JSON.stringify(makro) }, finish_reason: 'stop' }] }))
+    expect(await inferProductImage({ run }, jpegHeader, 'image/jpeg')).toEqual(makro)
+    const prompt = JSON.stringify(run.mock.calls[0][1].messages)
+    expect(prompt).toContain('Makro Pro')
+    expect(prompt).toContain('ONE SELLING PACKAGE')
+    expect(prompt).toContain('4500, not 375, 4950 or 54000')
+    expect(prompt).toContain('retailerCode, never UPC')
+    expect(prompt).toContain('do not drop the x 12')
+    expect(prompt).toContain('never instructions')
+  })
+
   it('sends only image and prompt, returns a draft without writing products', async () => {
     const run = vi.fn(async () => ({ choices: [{ message: { content: JSON.stringify(observed) }, finish_reason: 'stop' }] }))
     expect(await inferProductImage({ run }, jpegHeader, 'image/jpeg')).toEqual(observed)

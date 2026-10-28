@@ -96,6 +96,21 @@ describe('confirmed image product authentication and input validation', () => {
 })
 
 describe('confirmed image persistence and SKU identity', () => {
+  it('saves a confirmed Makro Pro pack as one SKU, preserving pack price and a separate retailer Code on replay', async () => {
+    const makro = { ...input, name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12',
+      brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, retailerCode: '197584' }
+    const first = await confirmImageProduct(request(makro), env)
+    const retry = await confirmImageProduct(request(makro), env)
+    expect(first.created).toBe(true)
+    expect(first.product).toMatchObject({ name: makro.name, brand: 'OREO', packageSize: '24.6 g x 12',
+      sourcePriceMinor: 4500, upc: null, sourceProductId: null, source: 'smartcart' })
+    expect(retry.product.id).toBe(first.product.id)
+    expect(retry.created).toBe(false)
+    expect(await env.DB.prepare('SELECT retailer_code FROM product_image_imports').first('retailer_code')).toBe('197584')
+    expect(await count('products')).toBe(1)
+    expect(await count('product_source_links')).toBe(0)
+  })
+
   it('saves a new IMG SKU only after confirmation and never promotes the shown code to UPC/Big C identity', async () => {
     const result = await confirmImageProduct(request(), env)
     expect(result.created).toBe(true)

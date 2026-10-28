@@ -140,6 +140,16 @@ describe('image extraction is read-only and requires human review', () => {
 })
 
 describe('confirmed product fields and immutable retry identities', () => {
+  it('prepares a Makro Pro multipack at 45 baht per pack without a fabricated barcode', () => {
+    const makroDraft: ImageDraft = { name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12',
+      brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: null, retailerCode: '197584' }
+    const makroFields = fieldsFromImageDraft(makroDraft)
+    expect(makroFields).toMatchObject({ sourcePrice: '45.00', packageSize: '24.6 g x 12', upc: '', retailerCode: '197584' })
+    expect(validateImageProductFields(makroFields)).toBeNull()
+    expect(createImageImportAttempt(makroFields, hash, operationId).payload).toMatchObject(makroDraft)
+    expect(validateImageProductFields({ ...makroFields, upc: '197584' })).toContain('UPC')
+  })
+
   it('requires a product name and validates price, field limits and actual UPC checksum', () => {
     expect(validateImageProductFields(emptyImageFields())).toContain('ชื่อสินค้า')
     expect(validateImageProductFields({ ...fields, upc: '60560' })).toContain('UPC')
@@ -309,6 +319,7 @@ describe('initial screenshot import UI', () => {
     const onProduct = vi.fn()
     const html = renderToStaticMarkup(createElement(ImageImport, { accountId: 'account-a', apiOrigin: 'http://localhost:8787', canImport: true, onProduct }))
     expect(html).toContain('Cloudflare AI')
+    expect(html).toContain('Big C และแอป Makro Pro')
     expect(html).toContain('ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล')
     expect(html).toContain('accept="image/jpeg,image/png,image/webp"')
     expect(html).not.toContain('ยืนยันและบันทึกสินค้าเป็น SKU')

@@ -70,7 +70,7 @@ export async function confirmImageProduct(request: Request, env: AuthEnv): Promi
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .bind(account.id, input.operationId, payloadHash, productId, input.retailerCode, input.imageSha256, now))
     if (!fingerprint) {
-      // A retailer code shown in a screenshot is NOT a verified Big C URL ID or GTIN.
+      // A screenshot retailer code (Big C, Makro Pro, etc.) is NOT a verified URL ID or GTIN.
       // Store that code only in the account's receipt, never a global source mapping.
       statements.push(env.DB.prepare(`INSERT INTO product_source_snapshots
         (id, product_id, source, source_product_id, source_url, source_price_minor,
