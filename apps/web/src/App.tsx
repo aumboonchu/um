@@ -4,17 +4,19 @@ import { ShoppingJourney } from './ShoppingJourney'
 import { RoundReports } from './RoundReports'
 import { useShoppingRounds } from './useShoppingRounds'
 import { HomeSummary, ProductDetailView, PurchaseDetailView } from './AccountViews'
-import { type ProductDetail } from './purchase-management'
+import { getProductDetail, type ProductDetail } from './purchase-management'
+import { Icon, PageHeader, ProductThumb, useMobileViewport } from './ui'
 import {
   getPendingOperationCount,
   syncPendingOperations,
+  requestPersistentStorage,
   type CachedProduct,
 } from './offline'
 
 type Account = { id: string; displayName: string | null; primaryEmail: string | null }
 type AuthResponse = { data: { authenticated: boolean; account: Account | null } }
 type Product = CachedProduct
-type AppView = 'home' | 'purchase' | 'history' | 'products'
+type AppView = 'home' | 'purchase' | 'history' | 'products' | 'account'
 
 type PurchaseHistoryItem = {
   id: string
@@ -38,6 +40,7 @@ type MyProductItem = {
   upc: string | null
   name: string
   brand: string | null
+  packageSize?: string | null
   imageUrl: string | null
   purchaseCount: number
   totalSpentMinor: number
@@ -50,9 +53,14 @@ const apiOrigin = import.meta.env.VITE_API_ORIGIN ?? 'http://localhost:8787'
 const storageUpgradeMessage = 'มีแท็บ SmartCart อื่นขวางการอัปเดตพื้นที่เก็บข้อมูล กรุณาปิดแท็บ SmartCart อื่นทั้งหมด แล้วรีเฟรชหน้านี้ ไม่ต้องล้างข้อมูลเบราว์เซอร์'
 
 function App() {
+  useMobileViewport()
   const [account, setAccount] = useState<Account | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
+  const [accountReturnView, setAccountReturnView] = useState<AppView>('purchase')
+  const [shoppingFocused, setShoppingFocused] = useState(false), [reportFocused, setReportFocused] = useState(false)
+  const [addImageAction, setAddImageAction] = useState(0), [reportId, setReportId] = useState<string | null>(null)
+  const [storageInfo, setStorageInfo] = useState(''), [buyingProduct, setBuyingProduct] = useState<string | null>(null)
   const [activeView, setActiveView] = useState<AppView>('purchase')
   const [detail, setDetail] = useState<{ kind: 'purchase' | 'product'; id: string } | null>(null)
   const [detailStack, setDetailStack] = useState<Array<{ kind: 'purchase' | 'product'; id: string }>>([])
@@ -81,6 +89,8 @@ function App() {
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [sessionInfo, setSessionInfo] = useState<ReturnType<typeof browserSessionInfo>>(null)
   const authSequence = useRef(0)
+
+  useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'auto' }) }, [activeView, detail?.id, detail?.kind])
 
   useEffect(() => {
     void loadAccount()
@@ -180,6 +190,7 @@ function App() {
   async function syncQueue() {
     if (!account || !navigator.onLine || isSyncing) return
     setIsSyncing(true)
+    setSyncMessage(null)
     try {
       await rounds.sync()
       const summary = await syncPendingOperations(apiOrigin)
@@ -276,7 +287,7 @@ function App() {
 
   function navigate(view: AppView) {
     if (detailsDirty && !window.confirm('มีข้อมูลแก้ไขที่ยังไม่บันทึกหรือคำขอที่รอยืนยัน ต้องการออกจากหน้านี้หรือไม่? คำขอที่ส่งแล้วสามารถกลับมาตรวจด้วยรหัสเดิมได้')) return
-    setDetailsDirty(false); setDetail(null); setDetailStack([]); setActiveView(view)
+    setDetailsDirty(false); setDetail(null); setDetailStack([]); setActiveView(view); setReportId(null)
   }
   function openDetail(kind: 'purchase' | 'product', id: string) {
     if (detailsDirty && !window.confirm('ต้องการออกจากรายการที่ยังแก้ไขหรือรอยืนยันอยู่หรือไม่?')) return
@@ -293,77 +304,84 @@ function App() {
       source: 'smartcart', sourcePriceMinor: item.recentPurchases[0]?.unitPriceMinor ?? null, regularPriceMinor: null, fetchedAt: null })
     setDetail(null); setDetailStack([]); setDetailsDirty(false); setActiveView('purchase')
   }
+  function openAccount() { setAccountReturnView(activeView); navigate('account') }
+  async function buyProduct(id: string) {
+    if (!account || !isOnline || buyingProduct) return
+    const sequence = authSequence.current
+    setBuyingProduct(id); setProductsMessage(null)
+    try { const item = await getProductDetail(apiOrigin, id); if (sequence === authSequence.current) buyAgain(item) }
+    catch { if (sequence === authSequence.current) setProductsMessage('ยังเปิดสินค้าไม่สำเร็จ ลองอีกครั้ง') }
+    finally { setBuyingProduct(null) }
+  }
 
-  return (
-    <main className="app-shell">
-      <section className="account-card" aria-labelledby="app-title">
-        <div>
-          <p className="eyebrow">SmartCart PWA</p>
-          <h1 id="app-title">สแกนสินค้า ซื้อเป็นรอบ</h1>
-          <p>สแกน → ถ้าไม่พบให้เพิ่มสินค้า → ใส่จำนวนและราคา → เพิ่มเข้ารอบ → กดชำระเงินเพื่อบันทึกทั้งรอบ แล้วดูรายงานแยกแต่ละครั้ง</p>
+  const pending = (pendingSyncCount ?? 0) + rounds.pending.length
+  const busySync = isSyncing || rounds.syncing
+  const showSync = !isOnline || pending > 0 || busySync || pendingSyncCount === null || Boolean(rounds.error)
+  const showNavigation = !detail && activeView !== 'account' && activeView !== 'home' && !(activeView === 'purchase' && shoppingFocused) && !(activeView === 'history' && reportFocused)
+  return <main className="app-shell"><div className={`app-frame${account && !isLoading && showNavigation ? ' with-navigation' : ''}${account && !isLoading && showSync ? ' has-sync' : ''}`} data-view={activeView}>
+    {!account || isLoading ? <section className="mobile-page login-page" aria-labelledby="login-title">
+      <PageHeader title="SmartCart" id="login-title" />
+      <div className="page-content login-content"><div className="scan-invitation"><span className="scan-mark"><Icon name="scanHero" /></span><h2>ซื้อสินค้าเป็นรอบ</h2><p className="muted">สแกน · บันทึก · ดูยอดซื้อ</p></div>
+        <div className="page-actions">
+          {isLoading ? <p role="status">กำลังตรวจสอบการเข้าสู่ระบบ…</p> : <>
+            {authMessage ? <p className="error-message" role="status">{authMessage}</p> : null}
+            {!isOnline ? <p className="pending-caption">เชื่อมต่ออินเทอร์เน็ตเพื่อเข้าสู่ระบบ</p> : null}
+            <button className="primary-button google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button>
+            {(!googleEnabled || sessionInfo) && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
+            <p className="action-caption">จดจำบนเครื่องนี้อัตโนมัติ</p>
+          </>}
         </div>
-        <div className="sync-banner" aria-live="polite">
-          <span className={isOnline ? 'online-indicator' : 'offline-indicator'}>{isOnline ? 'ออนไลน์' : 'ออฟไลน์'}</span>
-          <span>{pendingSyncCount === null ? 'ยังตรวจสอบจำนวนรายการรอซิงก์ไม่ได้' : pendingSyncCount > 0 ? `รอซิงก์ ${pendingSyncCount} รายการ` : 'ไม่มีรายการรอซิงก์'}</span>
-          {account ? <span>{rounds.pending.length ? `รอซิงก์รอบชำระ ${rounds.pending.length} รอบ` : 'ไม่มีรอบชำระรอซิงก์'}</span> : null}
-          <button className="secondary-button" onClick={() => void syncQueue()} disabled={!account || !isOnline || isSyncing || rounds.syncing || (pendingSyncCount === 0 && rounds.pending.length === 0)}>{isSyncing || rounds.syncing ? 'กำลังซิงก์…' : 'ซิงก์ตอนนี้'}</button>
-          {syncMessage ? <small>{syncMessage}</small> : null}
-        </div>
-        <div className="account-panel" aria-live="polite">
-          {isLoading ? <p>กำลังตรวจสอบการเข้าสู่ระบบ…</p> : account ? <details className="account-details"><summary>เข้าสู่ระบบแล้ว · {account.displayName ?? 'SmartCart user'} · ข้อมูลบัญชี</summary><div>
-            {account.primaryEmail ? <span>{account.primaryEmail}</span> : null}
-            <small>{sessionInfo?.remembered ? `จดจำการเข้าสู่ระบบในเบราว์เซอร์นี้ถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น กรุณาออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร จึงใช้การเข้าสู่ระบบได้เฉพาะแท็บนี้'}</small>
-            <button className="secondary-button" onClick={() => void signOut()} disabled={isSigningOut}>{isSigningOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}</button>
-          </div></details> : <><p className="account-label">{sessionInfo ? 'รอตรวจสอบการเข้าสู่ระบบเดิม' : 'ยังไม่ได้เข้าสู่ระบบ'}</p><button className="google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button><small>จดจำการเข้าสู่ระบบบนเบราว์เซอร์นี้อัตโนมัติ สูงสุด 30 วัน โดยไม่เก็บรหัสผ่าน Google</small></>}
-          {authMessage ? <small role="status">{authMessage}</small> : null}
-          {(!googleEnabled || (sessionInfo && !account)) && !isLoading && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
-        </div>
-        <nav className="view-tabs" aria-label="SmartCart sections">
-          <button className={activeView === 'home' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('home')} disabled={rounds.busy}>ภาพรวม</button>
-          <button className={activeView === 'purchase' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('purchase')} disabled={rounds.busy}>สแกน / รอบนี้</button>
-          <button className={activeView === 'history' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('history')} disabled={rounds.busy}>รายงานรายรอบ</button>
-          <button className={activeView === 'products' ? 'tab-active' : 'secondary-button'} onClick={() => navigate('products')} disabled={rounds.busy}>สินค้าของฉัน</button>
-        </nav>
+      </div>
+    </section> : <>
+      {showSync ? <aside className={`global-sync${!isOnline || pending || pendingSyncCount === null || rounds.error ? ' pending' : ''}`} aria-live="polite">
+        <span>{!isOnline ? 'ออฟไลน์' : busySync ? 'กำลังซิงก์…' : pending > 0 ? 'รอซิงก์' : 'ตรวจข้อมูลไม่ได้'}{rounds.pending.length ? ` · ${rounds.pending.length} รอบ` : ''}{pendingSyncCount ? ` · ${pendingSyncCount} รายการ` : ''}{pendingSyncCount === null ? ' · ตรวจจำนวนไม่ได้' : ''}</span>
+        {pending > 0 && isOnline ? <button className="text-button" onClick={() => void syncQueue()} disabled={busySync}>ซิงก์</button> : null}
+        {pending > 0 ? <small>อย่าล้างข้อมูลก่อนซิงก์</small> : null}
+      </aside> : null}
 
-        {detail && account ? detail.kind === 'purchase' ? <PurchaseDetailView key={`${account.id}:purchase:${detail.id}`} apiOrigin={apiOrigin} accountId={account.id} id={detail.id} online={isOnline} onBack={closeDetail} onDirtyChange={setDetailsDirty} onChanged={() => setDataVersion(v => v + 1)} onProduct={id => openDetail('product', id)} />
-          : <ProductDetailView key={`${account.id}:product:${detail.id}`} apiOrigin={apiOrigin} id={detail.id} online={isOnline} onBack={closeDetail} onPurchase={id => openDetail('purchase', id)} onBuy={buyAgain} /> : null}
+      {activeView === 'account' && !detail ? <section className="mobile-page focused-page" aria-labelledby="account-title"><PageHeader title="บัญชี" id="account-title" onBack={() => navigate(accountReturnView)} /><div className="page-content account-content">
+        <div className="account-identity"><span className="account-avatar"><Icon name="userLarge" /></span><div><strong>{account.displayName ?? 'บัญชี Google'}</strong>{account.primaryEmail ? <span className="muted">{account.primaryEmail}</span> : null}<small className="green-text">เข้าสู่ระบบแล้ว</small></div></div>
+        <h2>ข้อมูลของฉัน</h2><div className="summary-row"><span>สถานะ</span><strong className={pending || pendingSyncCount === null || rounds.error ? 'pending-caption' : 'green-text'}>{pending ? `รอซิงก์ ${rounds.pending.length} รอบ${pendingSyncCount ? ` / ${pendingSyncCount} รายการ` : ''}` : pendingSyncCount === null || rounds.error ? 'ตรวจสอบไม่ได้' : busySync ? 'กำลังซิงก์…' : 'ซิงก์แล้ว'}</strong></div>
+        {syncMessage ? <p className="inline-message" role="status">{syncMessage}</p> : null}
+        <button className="secondary-button" onClick={() => void syncQueue()} disabled={!isOnline || busySync || (!pending && pendingSyncCount !== null && !rounds.error)}>{busySync ? 'กำลังซิงก์…' : 'ซิงก์ข้อมูล'}</button>
+        <details className="disclosure"><summary>การเข้าสู่ระบบ<Icon name="down" /></summary><p className="muted">{sessionInfo?.remembered ? `จดจำถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร ใช้ได้เฉพาะแท็บนี้'}</p></details>
+        <details className="disclosure"><summary>พื้นที่เก็บข้อมูลออฟไลน์<Icon name="down" /></summary><div><p className="muted">ข้อมูลที่ยังไม่ซิงก์อาจสูญหายเมื่อเครื่องล้างพื้นที่ อย่าล้างข้อมูลเว็บก่อนซิงก์สำเร็จ</p><button className="secondary-button" onClick={() => { void requestPersistentStorage().then(result => setStorageInfo(result ? 'ได้รับสิทธิ์เก็บข้อมูลแล้ว แต่ยังควรซิงก์เสมอ' : 'เครื่องไม่ได้อนุญาต ยังบันทึกบนเครื่องและซิงก์ได้ตามปกติ')).catch(() => setStorageInfo('ตรวจสอบสิทธิ์ไม่ได้ โปรดซิงก์ข้อมูลเมื่อออนไลน์')) }}>ขอเก็บข้อมูลบนเครื่อง</button>{storageInfo ? <p role="status" className="muted">{storageInfo}</p> : null}</div></details>
+        <details className="disclosure"><summary>ข้อมูลเพิ่มเติม<Icon name="down" /></summary><div><button className="secondary-button" onClick={() => navigate('home')}>ภาพรวมรายการซื้อ</button></div></details>
+        {authMessage ? <p role="status" className="error-message">{authMessage}</p> : null}
+        <div className="page-actions"><button className="primary-button" onClick={() => navigate('purchase')}>กลับไปซื้อสินค้า</button><button className="text-button" onClick={() => void signOut()} disabled={isSigningOut}>{isSigningOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}</button></div>
+      </div></section> : null}
 
-        {activeView === 'home' && !detail ? <HomeSummary key={account?.id ?? 'signed-out'} apiOrigin={apiOrigin} accountId={account?.id ?? null} online={isOnline} version={dataVersion} pendingCount={pendingSyncCount} onAdd={() => navigate('purchase')} onHistory={() => navigate('history')} onPurchase={id => openDetail('purchase', id)} /> : null}
+      {detail ? <div className="legacy-detail"><PageHeader title={detail.kind === 'purchase' ? 'รายการซื้อ' : 'รายละเอียดสินค้า'} />{detail.kind === 'purchase' ? <PurchaseDetailView key={`${account.id}:purchase:${detail.id}`} apiOrigin={apiOrigin} accountId={account.id} id={detail.id} online={isOnline} onBack={closeDetail} onDirtyChange={setDetailsDirty} onChanged={() => setDataVersion(v => v + 1)} onProduct={id => openDetail('product', id)} />
+        : <ProductDetailView key={`${account.id}:product:${detail.id}`} apiOrigin={apiOrigin} id={detail.id} online={isOnline} onBack={closeDetail} onPurchase={id => openDetail('purchase', id)} onBuy={buyAgain} />}</div> : null}
 
-        <div hidden={activeView !== 'purchase' || Boolean(detail)}><ShoppingJourney key={account?.id ?? 'guest'} accountId={account?.id ?? null} apiOrigin={apiOrigin} online={isOnline} visible={activeView === 'purchase' && !detail} rounds={rounds} initialProduct={product} onConsumed={() => setProduct(null)} /></div>
+      {activeView === 'home' && !detail ? <div className="legacy-detail"><PageHeader title="ภาพรวมรายการซื้อ" onBack={() => navigate('account')} /><HomeSummary key={account.id} apiOrigin={apiOrigin} accountId={account.id} online={isOnline} version={dataVersion} pendingCount={pendingSyncCount} onAdd={() => navigate('purchase')} onHistory={() => navigate('history')} onPurchase={id => openDetail('purchase', id)} /></div> : null}
 
-        {activeView === 'history' && !detail ? <RoundReports key={account?.id ?? 'guest'} accountId={account?.id ?? null} apiOrigin={apiOrigin} online={isOnline} version={dataVersion} rounds={rounds} /> : null}
+      <div className="view-page" hidden={activeView !== 'purchase' || Boolean(detail)}><ShoppingJourney key={account.id} accountId={account.id} apiOrigin={apiOrigin} online={isOnline} visible={activeView === 'purchase' && !detail} rounds={rounds} initialProduct={product} onConsumed={() => { setProduct(null); setAddImageAction(0) }} onAccount={openAccount} onFocusChange={setShoppingFocused} action={addImageAction} onReport={id => { navigate('history'); setReportId(id) }} /></div>
 
-        {activeView === 'history' && !detail ? <section className="content-panel" aria-labelledby="history-title">
-          <h2 id="history-title">รายการเดิมที่ยังไม่ผูกรอบ</h2>
-          <p className="status-message">เก็บประวัติเดิมไว้แยกต่างหาก ไม่รวมเป็นรอบซื้อให้อัตโนมัติ</p>
-          <SearchForm value={historySearch} setValue={setHistorySearch} onSubmit={() => { setHistoryQuery(historySearch); void loadHistory(true, historySearch) }} placeholder="ค้นหาสินค้า, SKU, UPC หรือร้านค้า" />
-          {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูประวัติของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดประวัติจาก D1</p> : null}
-          {historyMessage ? <p className="status-message">{historyMessage}</p> : null}
-          <div className="history-list">{historyItems.map((item) => <HistoryCard key={item.id} item={item} onOpen={() => openDetail('purchase', item.id)} />)}</div>
-          {account && isOnline && !isLoadingHistory && historyItems.length === 0 ? <p className="status-message">ยังไม่มีรายการซื้อที่ตรงกับการค้นหา</p> : null}
-          {historyCursor ? <button className="secondary-button load-more" onClick={() => void loadHistory(false)} disabled={isLoadingHistory}>{isLoadingHistory ? 'กำลังโหลด…' : 'ดูรายการเพิ่มเติม'}</button> : null}
-          {isLoadingHistory && historyItems.length === 0 ? <p className="status-message">กำลังโหลดประวัติ…</p> : null}
-        </section> : null}
+      {activeView === 'history' && !detail ? <div className="view-page"><RoundReports key={account.id} accountId={account.id} apiOrigin={apiOrigin} online={isOnline} version={dataVersion} rounds={rounds} initialRoundId={reportId} onAccount={openAccount} onFocusChange={setReportFocused} legacy={<details className="disclosure legacy-history"><summary>รายการเดิม<Icon name="down" /></summary><div>
+        <SearchForm value={historySearch} setValue={setHistorySearch} onSubmit={() => { setHistoryQuery(historySearch); void loadHistory(true, historySearch) }} placeholder="สินค้า หรือร้านค้า" />
+        {!isOnline ? <p className="muted">ออนไลน์เพื่อโหลดรายการเดิม</p> : null}{historyMessage ? <p role="status" className="error-message">{historyMessage}</p> : null}
+        <div className="history-list">{historyItems.map(item => <HistoryCard key={item.id} item={item} onOpen={() => openDetail('purchase', item.id)} />)}</div>
+        {isOnline && !isLoadingHistory && !historyItems.length ? <p className="muted">ไม่มีรายการเดิม</p> : null}
+        {historyCursor ? <button className="secondary-button" onClick={() => void loadHistory(false)} disabled={isLoadingHistory}>{isLoadingHistory ? 'กำลังโหลด…' : 'ดูเพิ่มเติม'}</button> : null}
+      </div></details>} /></div> : null}
 
-        {activeView === 'products' && !detail ? <section className="content-panel" aria-labelledby="products-title">
-          <h2 id="products-title">สินค้าของฉัน</h2>
-          <p className="status-message">สินค้าที่คุณเคยบันทึกรายการซื้อ พร้อมยอดใช้จ่ายสะสม</p>
-          <SearchForm value={productsSearch} setValue={setProductsSearch} onSubmit={() => { setProductsQuery(productsSearch); void loadMyProducts(true, productsSearch) }} placeholder="ค้นหาชื่อสินค้า, SKU, UPC หรือแบรนด์" />
-          {!account ? <p className="status-message">เข้าสู่ระบบเพื่อดูคลังสินค้าของคุณ</p> : !isOnline ? <p className="status-message">เชื่อมต่ออินเทอร์เน็ตเพื่อโหลดคลังสินค้าจาก D1</p> : null}
-          {productsMessage ? <p className="status-message">{productsMessage}</p> : null}
-          <div className="product-library">{myProducts.map((item) => <MyProductCard key={item.id} item={item} onOpen={() => openDetail('product', item.id)} />)}</div>
-          {account && isOnline && !isLoadingProducts && myProducts.length === 0 ? <p className="status-message">ยังไม่มีสินค้าที่เคยซื้อ</p> : null}
-          {productsCursor ? <button className="secondary-button load-more" onClick={() => void loadMyProducts(false)} disabled={isLoadingProducts}>{isLoadingProducts ? 'กำลังโหลด…' : 'ดูสินค้าเพิ่มเติม'}</button> : null}
-          {isLoadingProducts && myProducts.length === 0 ? <p className="status-message">กำลังโหลดสินค้า…</p> : null}
-        </section> : null}
-      </section>
-    </main>
-  )
+      {activeView === 'products' && !detail ? <section className="mobile-page" aria-labelledby="products-title"><PageHeader title="สินค้า" id="products-title" onAccount={openAccount} /><div className="page-content product-content">
+        <SearchForm value={productsSearch} setValue={setProductsSearch} onSubmit={() => { setProductsQuery(productsSearch); void loadMyProducts(true, productsSearch) }} placeholder="ชื่อสินค้า หรือบาร์โค้ด" />
+        {!isOnline ? <p className="pending-caption">ออนไลน์เพื่อโหลดสินค้า</p> : null}{productsMessage ? <p role="alert" className="error-message">{productsMessage}</p> : null}
+        <div className="product-library">{myProducts.map(item => <MyProductCard key={item.id} item={item} onOpen={() => openDetail('product', item.id)} onBuy={() => void buyProduct(item.id)} disabled={!isOnline || Boolean(buyingProduct)} buying={buyingProduct === item.id} />)}</div>
+        {isOnline && !isLoadingProducts && !myProducts.length ? <p className="empty-state">ยังไม่มีสินค้าที่เคยซื้อ</p> : null}
+        {isLoadingProducts ? <p role="status">กำลังโหลดสินค้า…</p> : null}{productsCursor ? <button className="secondary-button" onClick={() => void loadMyProducts(false)} disabled={isLoadingProducts}>ดูสินค้าเพิ่มเติม</button> : null}
+        <div className="page-actions"><button className="secondary-button" disabled={!isOnline} onClick={() => { navigate('purchase'); setAddImageAction(value => value + 1) }}><Icon name="plusGreen" />เพิ่มสินค้า</button></div>
+      </div></section> : null}
+
+      {showNavigation ? <nav className="bottom-nav" aria-label="เมนูหลัก">{([{ view: 'purchase', label: 'ซื้อสินค้า', activeIcon: 'scan', icon: 'scanMuted' }, { view: 'history', label: 'รายงาน', activeIcon: 'reportActive', icon: 'report' }, { view: 'products', label: 'สินค้า', activeIcon: 'boxActive', icon: 'boxMuted' }] as const).map(tab => <button key={tab.view} className={activeView === tab.view ? 'nav-active' : ''} aria-current={activeView === tab.view ? 'page' : undefined} disabled={rounds.busy} onClick={() => navigate(tab.view)}><span className="nav-icon"><Icon name={activeView === tab.view ? tab.activeIcon : tab.icon} /></span><span>{tab.label}</span></button>)}</nav> : null}
+    </>}
+  </div></main>
 }
 
 function SearchForm({ value, setValue, onSubmit, placeholder }: { value: string; setValue: (value: string) => void; onSubmit: () => void; placeholder: string }) {
-  return <form className="search-form" onSubmit={(event) => { event.preventDefault(); onSubmit() }}><label htmlFor="history-search">ค้นหา</label><div className="input-row"><input id="history-search" value={value} onChange={(event) => setValue(event.target.value)} maxLength={80} placeholder={placeholder} /><button className="primary-button">ค้นหา</button></div></form>
+  return <form className="search-form" role="search" onSubmit={event => { event.preventDefault(); onSubmit() }}><div className="search-bar"><button className="icon-button" aria-label="ค้นหา"><Icon name="search" /></button><input type="search" aria-label="ค้นหา" value={value} onChange={event => setValue(event.target.value)} maxLength={80} placeholder={placeholder} /></div></form>
 }
 
 function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: () => void }) {
@@ -375,13 +393,8 @@ function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: () =
   </article>
 }
 
-function MyProductCard({ item, onOpen }: { item: MyProductItem; onOpen: () => void }) {
-  return <article className="library-card">
-    {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
-    <div><strong>{item.name}</strong><p>{[item.brand, `SKU: ${item.sku ?? item.id}`, item.upc ? `UPC: ${item.upc}` : null].filter(Boolean).join(' · ')}</p><small>ซื้อ {item.purchaseCount} ครั้ง · ล่าสุด {formatDate(item.lastPurchasedAt)}</small></div>
-    <strong className="history-total">{formatBaht(item.totalSpentMinor)}</strong>
-    <button type="button" className="secondary-button card-detail-link" onClick={onOpen} aria-label={`ดูรายละเอียดสินค้า ${item.name}`}>ดูรายละเอียดสินค้า</button>
-  </article>
+function MyProductCard({ item, onOpen, onBuy, disabled, buying }: { item: MyProductItem; onOpen: () => void; onBuy: () => void; disabled: boolean; buying: boolean }) {
+  return <article className="library-row"><button className="library-details" onClick={onOpen} aria-label={`ดูรายละเอียดสินค้า ${item.name}`}><ProductThumb imageUrl={item.imageUrl} /><span className="row-description"><strong>{item.name}</strong><small>{item.packageSize ?? item.brand ?? `ซื้อ ${item.purchaseCount} ครั้ง`}</small></span></button><button className="buy-again" onClick={onBuy} disabled={disabled} aria-label={`ซื้อ ${item.name} อีก`}>{buying ? 'กำลังเปิด…' : 'ซื้ออีก'}</button></article>
 }
 
 function formatBaht(minor: number): string {

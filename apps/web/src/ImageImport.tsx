@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { apiFetch } from './auth-client'
 import BarcodeScanner from './BarcodeScanner'
+import { Icon } from './ui'
 import {
   clearPendingImageAttempt, createImageImportAttempt, emptyImageFields, fieldsFromImageDraft, imageFingerprint,
   loadPendingImageAttempt, prepareImageUpload, requestPersistedImageConfirmation, requestImageExtraction, validateSourceImage,
@@ -14,12 +15,13 @@ export type ImageImportProps = {
   onProduct: (product: ConfirmedImageProduct) => void
   onReset?: () => void
   scannedUpc?: string | null
+  compact?: boolean
 }
 
 type Stage = 'idle' | 'preparing' | 'extracting' | 'review' | 'extract-error' | 'saving' | 'save-error' | 'uncertain' | 'success'
 type Feedback = { kind: 'info' | 'error' | 'uncertain' | 'success'; title: string; message: string; code?: string }
 
-export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onReset, scannedUpc = null }: ImageImportProps) {
+export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onReset, scannedUpc = null, compact = false }: ImageImportProps) {
   const id = useId()
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -285,16 +287,18 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
   const canRead = canImport && Boolean(file) && !busy && !attempt.current && !hasReview
     && (stage !== 'extract-error' || allowExtractionRetry)
 
-  return <section className="image-import" aria-labelledby={`${id}-title`}>
-    <h3 id={`${id}-title`}>เพิ่มสินค้าจากภาพ</h3>
-    {scannedUpc ? <p className="image-import-notice">บาร์โค้ดจากการสแกน: {scannedUpc} — จะเติมให้เมื่อภาพไม่แสดงบาร์โค้ด กรุณาตรวจว่าภาพตรงกับสินค้าที่สแกนก่อนยืนยัน</p> : null}
+  return <section className={`image-import${compact ? ' image-import-compact' : ''}`} aria-labelledby={`${id}-title`}>
+    <h3 id={`${id}-title`} className={compact ? 'sr-only' : undefined}>เพิ่มสินค้าจากภาพ</h3>
+    {scannedUpc ? <p className="image-import-notice">{compact ? `UPC ที่สแกน: ${scannedUpc}` : `บาร์โค้ดจากการสแกน: ${scannedUpc} — จะเติมให้เมื่อภาพไม่แสดงบาร์โค้ด กรุณาตรวจว่าภาพตรงกับสินค้าที่สแกนก่อนยืนยัน`}</p> : null}
+    {!compact ? <>
     <p className="image-import-notice">รองรับภาพหน้าสินค้าจาก Big C และแอป Makro Pro — แคปภาพให้เห็นชื่อ ขนาดบรรจุ และราคา แล้วเลือกภาพด้านล่าง</p>
     <p className="image-import-field-help">สินค้าขายเป็นแพ็ก: บันทึกราคาต่อแพ็กและขนาดให้ครบ เมื่อนำไปบันทึกรายการซื้อ จำนวน 1 หมายถึง 1 แพ็ก ไม่ใช่จำนวนชิ้นภายในแพ็ก</p>
-    <p id={`${id}-privacy`} className="image-import-notice">ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน</p>
-    <label htmlFor={`${id}-file`}>เลือกภาพหน้าจอหรือรูปสินค้า (JPG / PNG / WebP ไม่เกิน 10 MB)</label>
-    <input ref={fileInput} id={`${id}-file`} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} disabled={!canImport || busy || locked} aria-describedby={`${id}-privacy`} />
+    </> : null}
+    {!hasReview ? <p id={`${id}-privacy`} className="image-import-notice">{compact ? 'ใช้ภาพ Big C / Makro Pro · ภาพส่งให้ Cloudflare AI อ่าน กรุณาครอปข้อมูลส่วนตัวออกก่อน' : 'ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน'}</p> : null}
+    <label htmlFor={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined}>{compact ? 'เลือกรูปสินค้า' : 'เลือกภาพหน้าจอหรือรูปสินค้า (JPG / PNG / WebP ไม่เกิน 10 MB)'}</label>
+    <input ref={fileInput} id={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} disabled={!canImport || busy || locked} aria-describedby={!hasReview ? `${id}-privacy` : undefined} />
     {!canImport ? <p className="status-message">เข้าสู่ระบบด้วย Google และเชื่อมต่ออินเทอร์เน็ตก่อนเพิ่มสินค้าจากภาพ</p> : null}
-    {preview ? <figure className="image-import-preview"><img src={preview} alt="ภาพสินค้าที่เลือกเพื่ออ่านข้อมูล" /><figcaption>ภาพตัวอย่างบนอุปกรณ์ — ยังไม่ใช่สินค้าที่บันทึกแล้ว</figcaption></figure> : null}
+    {preview ? <figure className={`image-import-preview${compact && hasReview ? ' selected-image-card' : ''}`}><img src={preview} alt="ภาพสินค้าที่เลือกเพื่ออ่านข้อมูล" /><figcaption>{compact ? 'ภาพที่เลือก' : 'ภาพตัวอย่างบนอุปกรณ์ — ยังไม่ใช่สินค้าที่บันทึกแล้ว'}</figcaption></figure> : compact && hasReview ? <div className="selected-image-card"><Icon name="imageLarge" /><span>ข้อมูลจากภาพ</span></div> : null}
     {!hasReview && file && !busy ? <div className="image-import-actions">
       <button type="button" className="primary-button" disabled={!canRead} onClick={() => void readImage()}>{stage === 'extract-error' ? 'ลองอ่านภาพอีกครั้ง' : 'อ่านข้อมูลจากภาพ'}</button>
       {stage === 'extract-error' && preparedImage.current ? <button type="button" className="secondary-button" onClick={beginManualReview} disabled={!canImport}>กรอกข้อมูลจากภาพเอง</button> : null}
@@ -302,7 +306,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     </div> : null}
     {feedback ? <div ref={feedbackRef} className={`import-feedback image-import-feedback import-feedback-${feedback.kind === 'info' ? 'loading' : feedback.kind}`} role={feedback.kind === 'error' || feedback.kind === 'uncertain' ? 'alert' : 'status'} aria-live={feedback.kind === 'error' || feedback.kind === 'uncertain' ? 'assertive' : 'polite'} aria-atomic="true" aria-labelledby={`${id}-feedback-title`} tabIndex={-1}>
       <span className={`import-status-icon${busy ? ' import-spinner' : ''}`} aria-hidden="true">{busy ? null : feedback.kind === 'success' ? '✓' : feedback.kind === 'info' ? 'i' : '!'}</span>
-      <div className="import-content"><h3 id={`${id}-feedback-title`}>{feedback.title}</h3><p>{feedback.message}</p>
+      <div className="import-content"><h3 id={`${id}-feedback-title`}>{feedback.title}</h3><p>{compact && feedback.kind === 'info' ? busy ? 'ยังไม่ได้สร้างสินค้า' : 'ตรวจข้อมูลก่อนบันทึก' : feedback.message}</p>
         {feedback.code ? <p className="import-error-code">รหัสการตรวจสอบ: <code>{feedback.code}</code></p> : null}
         {savedProduct ? <div className="import-product-details"><strong>{savedProduct.name}</strong><span>SKU: <strong>{savedProduct.sku}</strong></span></div> : null}
         {busy ? <button type="button" className="import-action" onClick={stopWaiting} disabled={!canImport}>{stage === 'saving' ? 'หยุดรอผล' : 'ยกเลิกการอ่านภาพ'}</button> : null}
@@ -315,18 +319,20 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
         <legend>ตรวจสอบและแก้ไขข้อมูลก่อนยืนยัน</legend>
         {warnings.length > 0 ? <ul className="image-import-warnings" aria-label="ข้อควรตรวจสอบจากการอ่านภาพ">{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul> : null}
         <label>ชื่อสินค้า<input value={fields.name} onChange={(event) => editField('name', event.target.value)} maxLength={200} required /></label>
-        <label>แบรนด์ (ไม่บังคับ)<input value={fields.brand} onChange={(event) => editField('brand', event.target.value)} maxLength={100} /></label>
-        <label>ขนาดบรรจุ / จำนวนชิ้นต่อแพ็ก (ไม่บังคับ)<input value={fields.packageSize} onChange={(event) => editField('packageSize', event.target.value)} maxLength={100} placeholder="เช่น 24.6 g x 12" /></label>
-        <label>ราคาอ้างอิงจากภาพ (บาท)<input value={fields.sourcePrice} onChange={(event) => editField('sourcePrice', event.target.value)} inputMode="decimal" placeholder="เว้นว่างหากไม่มีราคา" /></label>
-        <p className="image-import-field-help">ใช้ราคาต่อหน่วยขาย เช่น แพ็ก 12 ชิ้น ราคา 45 บาท ให้ใส่ 45 ไม่ใช่ราคาต่อชิ้น 3.75 หรือราคาขีดฆ่า ราคาในภาพไม่ใช่การรับประกันราคาปัจจุบัน และยังไม่ใช่ราคาของรายการซื้อ</p>
-        <label>UPC / EAN บาร์โค้ด (ไม่บังคับ)<input value={fields.upc} onChange={(event) => editField('upc', event.target.value)} inputMode="numeric" maxLength={14} placeholder="ใส่เมื่อเห็นบาร์โค้ดชัดเจนเท่านั้น" /></label>
-        <BarcodeScanner disabled={!canImport || busy || locked} onDetected={(value) => editField('upc', value)} />
-        <p className="image-import-field-help">หากภาพไม่มีบาร์โค้ด ให้เว้นว่าง ห้ามใช้รหัสสินค้า Big C หรือ Code ของ Makro Pro แทนบาร์โค้ด</p>
+        {!compact ? <label>แบรนด์ (ไม่บังคับ)<input value={fields.brand} onChange={(event) => editField('brand', event.target.value)} maxLength={100} /></label> : null}
+        <label>{compact ? 'ขนาด / บรรจุ' : 'ขนาดบรรจุ / จำนวนชิ้นต่อแพ็ก (ไม่บังคับ)'}<input value={fields.packageSize} onChange={(event) => editField('packageSize', event.target.value)} maxLength={100} placeholder="เช่น 24.6 g x 12" /></label>
+        <label>{compact ? 'ราคาในภาพ (อ้างอิง)' : 'ราคาอ้างอิงจากภาพ (บาท)'}<input value={fields.sourcePrice} onChange={(event) => editField('sourcePrice', event.target.value)} inputMode="decimal" placeholder="เว้นว่างหากไม่มีราคา" /></label>
+        <p className="image-import-field-help">{compact ? 'ราคาต่อหน่วยขาย / แพ็ก ยังไม่ใช่ราคาที่ซื้อจริง' : 'ใช้ราคาต่อหน่วยขาย เช่น แพ็ก 12 ชิ้น ราคา 45 บาท ให้ใส่ 45 ไม่ใช่ราคาต่อชิ้น 3.75 หรือราคาขีดฆ่า ราคาในภาพไม่ใช่การรับประกันราคาปัจจุบัน และยังไม่ใช่ราคาของรายการซื้อ'}</p>
+        <label>{compact ? 'UPC / EAN (ไม่บังคับ)' : 'UPC / EAN บาร์โค้ด (ไม่บังคับ)'}<input value={fields.upc} onChange={(event) => editField('upc', event.target.value)} inputMode="numeric" maxLength={14} placeholder="เว้นว่างหากไม่มีบาร์โค้ด" /></label>
+        <BarcodeScanner disabled={!canImport || busy || locked} presentation={compact ? 'journey' : 'inline'} inputOnly onDetected={(value) => editField('upc', value)} />
+        <p className="image-import-field-help">{compact ? 'รหัสร้านไม่ใช่ UPC / EAN' : 'หากภาพไม่มีบาร์โค้ด ให้เว้นว่าง ห้ามใช้รหัสสินค้า Big C หรือ Code ของ Makro Pro แทนบาร์โค้ด'}</p>
+        {compact ? <details className="disclosure"><summary>รายละเอียดเพิ่มเติม<Icon name="down" /></summary><div><label>แบรนด์<input value={fields.brand} onChange={event => editField('brand', event.target.value)} maxLength={100} /></label><label>รหัสร้าน (ไม่ใช่บาร์โค้ด)<input value={fields.retailerCode} onChange={event => editField('retailerCode', event.target.value)} maxLength={80} /></label></div></details> : <>
         <label>รหัสสินค้าร้าน / Code ที่แสดงบนภาพ (ไม่บังคับ)<input value={fields.retailerCode} onChange={(event) => editField('retailerCode', event.target.value)} maxLength={80} placeholder="เช่น 60560 หรือ 197584" /></label>
         <p className="image-import-field-help">เก็บไว้เป็นข้อมูลอ้างอิงของรายการนำเข้าเท่านั้น ไม่ใช่ UPC และไม่ใช้ยืนยันตัวสินค้าระหว่างร้าน</p>
-        <label className="image-import-confirmation"><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} required /><span>ฉันตรวจสอบชื่อ ราคา และรหัสแล้ว ยืนยันบันทึกข้อมูลนี้เป็นสินค้า</span></label>
+        </>}
+        <label className="image-import-confirmation"><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} required /><span>{compact ? 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' : 'ฉันตรวจสอบชื่อ ราคา และรหัสแล้ว ยืนยันบันทึกข้อมูลนี้เป็นสินค้า'}</span></label>
       </fieldset>
-      {!locked ? <div className="image-import-actions"><button type="submit" className="primary-button" disabled={!canImport || busy || !checked}>ยืนยันและบันทึกสินค้าเป็น SKU</button><button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport || busy}>ยกเลิก / เลือกภาพใหม่</button></div> : null}
+      {!locked ? <div className={`image-import-actions${compact ? ' page-actions' : ''}`}><button type="submit" className="primary-button" disabled={!canImport || busy || !checked}>{compact ? 'บันทึกและใส่ราคา' : 'ยืนยันและบันทึกสินค้าเป็น SKU'}</button><button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport || busy}>ยกเลิก / เลือกภาพใหม่</button></div> : null}
     </form> : null}
     {stage === 'success' ? <button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport}>เพิ่มสินค้าจากภาพใหม่</button> : null}
   </section>

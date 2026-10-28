@@ -4,8 +4,7 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f8faf9",
-  "theme_color": "#0f945c",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "description": "บันทึกและติดตามการซื้อสินค้า"
 }
-

@@ -1,0 +1,7 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="320" height="180" viewBox="0 0 320 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Editable scan reticle and sample barcode">
+<path id="Vector" d="M3 42V15C3 11.8174 4.26428 8.76515 6.51472 6.51472C8.76515 4.26428 11.8174 3 15 3H42M278 3H305C308.183 3 311.235 4.26428 313.485 6.51472C315.736 8.76515 317 11.8174 317 15V42M3 138V165C3 168.183 4.26428 171.235 6.51472 173.485C8.76515 175.736 11.8174 177 15 177H42M278 177H305C308.183 177 311.235 175.736 313.485 173.485C315.736 171.235 317 168.183 317 165V138" stroke-width="4" stroke-linecap="round" stroke="#9EE4BF"/>
+<path id="Vector_2" opacity="0.9" d="M61 48V132M70 48V132M85 48V132M94 48V132M108 48V132M116 48V132M134 48V132M143 48V132M155 48V132M172 48V132M180 48V132M198 48V132M209 48V132M221 48V132M237 48V132M246 48V132M263 48V132" stroke-width="5" stroke="white"/>
+<path id="Vector_3" d="M28 90H292" stroke-width="2" stroke="#8CDEB2"/>
+</g>
+</svg>

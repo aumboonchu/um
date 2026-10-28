@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { bangkokMonth, formatMoney, formatPurchaseDate } from './purchase-management'
 import { cartTotal, roundMessage, roundRequest, validRoundPage, validRoundReport, type ClosedRound, type RoundPage, type RoundReport } from './shopping-rounds'
 import type { ShoppingRoundsController } from './useShoppingRounds'
+import { Icon, PageHeader, ProductThumb } from './ui'
 
 export const paymentLabel = (value: string) => ({ cash: 'เงินสด', card: 'บัตร', transfer: 'โอนเงิน', other: 'อื่น ๆ' })[value] ?? value
 export function localRoundReport(round: ClosedRound): RoundReport {
@@ -24,10 +25,13 @@ function download(report: RoundReport, status: string) {
   const link = document.createElement('a'); link.href = url; link.download = `smartcart-round-${report.id}.csv`; link.click()
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
-export function RoundReports({ accountId, apiOrigin, online, version, rounds }: { accountId: string | null; apiOrigin: string; online: boolean; version: number; rounds: ShoppingRoundsController }) {
+export function RoundReports({ accountId, apiOrigin, online, version, rounds, initialRoundId, onAccount, onFocusChange, legacy }: { accountId: string | null; apiOrigin: string; online: boolean; version: number; rounds: ShoppingRoundsController; initialRoundId?: string | null; onAccount?: () => void; onFocusChange?: (focused: boolean) => void; legacy?: ReactNode }) {
   const [month, setMonth] = useState(bangkokMonth), [data, setData] = useState<RoundPage | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<RoundReport | null>(null), [source, setSource] = useState(''), [reload, setReload] = useState(0)
   const sequence = useRef(0), mounted = useRef(true)
+  const initialOpened = useRef<string | null>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'auto' }); heading.current?.focus({ preventScroll: true }) }, [selected?.id])
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current += 1 } }, [])
   async function load(cursor: string | null = null) {
     if (!accountId || !online || !/^\d{4}-\d{2}$/.test(month)) return
@@ -40,7 +44,14 @@ export function RoundReports({ accountId, apiOrigin, online, version, rounds }: 
     } catch (e) { if (mounted.current && token === sequence.current) setError(roundMessage(e instanceof Error ? e.message : '')) }
     finally { if (mounted.current && token === sequence.current) setLoading(false) }
   }
-  useEffect(() => { setSelected(null); setSource(''); setData(null); void load(); return () => { sequence.current += 1 } }, [accountId, online, month, version, reload])
+  useEffect(() => { setData(null); void load(); return () => { sequence.current += 1 } }, [accountId, online, month, version, reload])
+  useEffect(() => { onFocusChange?.(Boolean(selected)); return () => onFocusChange?.(false) }, [Boolean(selected), onFocusChange])
+  useEffect(() => {
+    if (!initialRoundId || initialOpened.current === initialRoundId) return
+    const local = rounds.closed.find(round => round.id === initialRoundId)
+    if (local) { initialOpened.current = initialRoundId; setSelected(localRoundReport(local)); setSource(local.status === 'synced' ? 'บันทึกเข้า D1 แล้ว' : 'รอซิงก์') }
+    else if (online) { initialOpened.current = initialRoundId; void openReport(initialRoundId) }
+  }, [initialRoundId, online, rounds.closed])
   async function openReport(id: string) {
     const token = ++sequence.current; setLoading(true); setError('')
     try {
@@ -52,20 +63,35 @@ export function RoundReports({ accountId, apiOrigin, online, version, rounds }: 
   }
   const cached = rounds.closed.filter(round => new Date(Date.parse(round.payload.checkedOutAt) + 7 * 3600_000).toISOString().slice(0, 7) === month)
   const local = online ? cached.filter(round => round.status === 'pending') : cached
-  return <section className="content-panel round-reports" aria-labelledby="round-report-title"><div className="section-heading"><div><p className="eyebrow">แยกรายงานตามรอบชำระ</p><h2 id="round-report-title">รายงานรายรอบ</h2></div><button className="secondary-button" disabled={!accountId || !online || loading} onClick={() => { void rounds.sync(); setReload(v => v + 1) }}>โหลด / ซิงก์ใหม่</button></div>
-    <label className="month-filter">เดือน (เวลาไทย)<input type="month" min="2000-01" max="2100-12" value={month} onChange={e => setMonth(e.target.value)} /></label>
-    {!accountId ? <p className="empty-state">เข้าสู่ระบบเพื่อดูรอบซื้อของคุณ</p> : null}
-    {loading ? <p role="status">กำลังโหลดรายงาน…</p> : null}{error || rounds.error ? <p className="error-message" role="alert">{error || rounds.error}</p> : null}
-    {!online ? <p className="status-message">ออฟไลน์ — แสดงเฉพาะสำเนารอบที่มีในอุปกรณ์นี้ ไม่ใช่รายงานทั้งหมดของบัญชี D1 เป็นข้อมูลหลัก</p> : null}
-    {data ? <><dl className="summary-grid"><div className="summary-main"><dt>ยอดชำระรวม (D1)</dt><dd>{formatMoney(data.summary.totalPaidMinor)}</dd></div><div><dt>รอบที่ชำระแล้ว (D1)</dt><dd>{data.summary.roundCount} รอบ</dd></div><div><dt>เฉลี่ยต่อรอบ</dt><dd>{formatMoney(data.summary.roundCount ? Math.round(data.summary.totalPaidMinor / data.summary.roundCount) : 0)}</dd></div></dl><p className="status-message">ไม่รวมรอบกำลังเลือกสินค้าและรอบรอซิงก์</p>
-      {data.legacy.count ? <p className="image-import-notice">รายการเดิมที่ยังไม่ผูกรอบ {data.legacy.count} รายการ · {formatMoney(data.legacy.totalMinor)} แยกจากยอดรายรอบด้านบน ดูได้ในหมวดข้อมูลเดิมด้านล่าง ไม่เดาว่ารายการใดเป็นรอบเดียวกัน</p> : null}
-      <div className="summary-purchases">{data.items.map(round => <button className="summary-purchase" key={round.id} disabled={loading} onClick={() => void openReport(round.id)}><span><strong>รอบ {round.id.slice(0, 8)} · {round.storeName ?? 'ไม่ระบุร้าน'}</strong><small>{formatPurchaseDate(round.checkedOutAt)} · {round.lineCount} รายการ · {paymentLabel(round.paymentMethod)} · บันทึกเข้า D1 แล้ว</small></span><strong>{formatMoney(round.totalMinor)}</strong></button>)}</div>
-      {!data.items.length ? <p className="empty-state">ยังไม่มีรอบที่ชำระและซิงก์สำเร็จในเดือนนี้</p> : null}
-      {data.nextCursor ? <button className="secondary-button" disabled={loading} onClick={() => void load(data.nextCursor)}>ดูรอบก่อนหน้าเพิ่มเติม</button> : null}</> : null}
-    {local.length ? <div className="pending-change"><h3>{online ? 'จบรอบแล้ว รอยืนยัน D1' : 'รอบที่เก็บบนอุปกรณ์นี้'}</h3>{local.map(round => <button className="summary-purchase" key={round.id} onClick={() => { setSelected(localRoundReport(round)); setSource(round.status === 'synced' ? 'cache บนอุปกรณ์ — เคยยืนยัน D1 แล้ว' : 'จบรอบบนอุปกรณ์แล้ว ยังรอยืนยัน D1') }}><span><strong>รอบ {round.id.slice(0, 8)} · {round.payload.storeName ?? 'ไม่ระบุร้าน'}</strong><small>{formatPurchaseDate(round.payload.checkedOutAt)} · {round.lines.length} รายการ · {round.status === 'pending' ? 'รอซิงก์' : 'cache'}</small></span><strong>{formatMoney(cartTotal(round.lines))}</strong></button>)}<button className="primary-button" disabled={!online || rounds.syncing} onClick={() => void rounds.sync()}>ซิงก์รอบที่ค้างด้วยรหัสเดิม</button><p>ข้อมูลที่ยังไม่เข้า D1 อาจสูญหายหากอุปกรณ์ล้างพื้นที่เก็บข้อมูล</p></div> : null}
-    {selected ? <article className="round-receipt"><div className="section-heading"><h3>รายละเอียดรอบ {selected.id.slice(0, 8)}</h3><button className="secondary-button" onClick={() => setSelected(null)}>ปิดรายละเอียด</button></div><p className="source-badge">{source}</p><p className="round-id">รหัสเต็ม: {selected.id}</p><dl className="detail-grid"><div><dt>ร้านค้า</dt><dd>{selected.storeName ?? 'ไม่ระบุ'}</dd></div><div><dt>เวลาชำระ</dt><dd>{formatPurchaseDate(selected.checkedOutAt)}</dd></div><div><dt>วิธีชำระ</dt><dd>{paymentLabel(selected.paymentMethod)}</dd></div><div><dt>จำนวนรายการ</dt><dd>{selected.lineCount}</dd></div></dl>
-      {selected.lines.map((line, index) => <div className="round-line" key={line.id}><div><strong>{index + 1}. {line.productName}</strong><small>{line.packageSize} · SKU {line.productSku}</small><small>UPC {line.productUpc ?? 'ไม่มีบาร์โค้ด'} · {line.quantity} × {formatMoney(line.unitPriceMinor)}</small>{line.note ? <small>{line.note}</small> : null}</div><strong>{formatMoney(line.totalMinor)}</strong></div>)}
-      <p className="round-total">ยอดชำระทั้งรอบ <strong>{formatMoney(selected.totalMinor)}</strong></p>{selected.note ? <p>หมายเหตุ: {selected.note}</p> : null}<p className="status-message">บันทึกการชำระด้วยตนเอง ไม่ใช่ใบเสร็จหรือหลักฐานยืนยันจากร้านค้า</p><button className="primary-button" onClick={() => download(selected, source)}>ดาวน์โหลดรายงานรอบนี้ (CSV)</button>
-    </article> : null}
+  function closeReport() { setSelected(null); setSource(''); if (!data && online) setReload(value => value + 1) }
+  const selectedLocal = selected ? rounds.closed.find(round => round.id === selected.id) : null
+  const isPending = selectedLocal?.status === 'pending' || source === 'รอซิงก์' && selectedLocal?.status !== 'synced'
+  const receiptSource = isPending ? 'รอซิงก์' : selectedLocal?.status === 'synced' ? online ? 'บันทึกเข้า D1 แล้ว' : 'cache บนอุปกรณ์ — เคยยืนยัน D1 แล้ว' : source
+  if (selected) return <section className="round-reports mobile-page focused-page" aria-labelledby="round-report-title">
+    <PageHeader title="สรุปรอบซื้อ" id="round-report-title" headingRef={heading} onBack={closeReport} trailing={<button className="icon-button" aria-label="ส่งออก CSV" onClick={() => download(selected, receiptSource)}><Icon name="share" /></button>} />
+    <div className="page-content receipt-content"><div className="receipt-identity"><div><h2>{selected.storeName ?? 'ไม่ระบุร้าน'}</h2><p className="muted">{formatPurchaseDate(selected.checkedOutAt)}</p></div><span className={`status-chip${isPending ? ' pending' : ''}`}><Icon name={isPending ? 'clock' : 'checkSmall'} />{isPending ? 'รอซิงก์' : 'ซิงก์แล้ว'}</span></div>
+      <div className="round-amount"><span className="muted">ยอดรวมรอบนี้</span><p className="amount">{formatMoney(selected.totalMinor)}</p></div><hr />
+      <div className="receipt-lines">{selected.lines.map(line => <div className="product-row" key={line.id}><ProductThumb /><span className="row-description"><strong>{line.productName}</strong><small>{line.packageSize ?? ''}</small></span><span className="row-amount"><strong>{formatMoney(line.totalMinor)}</strong><small>{line.quantity} × {formatMoney(line.unitPriceMinor)}</small></span></div>)}</div>
+      <div className="summary-row small"><span>ชำระด้วย</span><span>{paymentLabel(selected.paymentMethod)}</span></div>
+      {isPending ? <p className="pending-caption">อย่าล้างข้อมูลก่อนซิงก์</p> : null}
+      <details className="disclosure"><summary>รายละเอียดรอบ<Icon name="down" /></summary><div><p className="round-id">รหัสรอบ: {selected.id}</p><p className="muted">{isPending ? 'เก็บบนเครื่อง ยังรอยืนยันจาก D1' : receiptSource}</p>{selected.note ? <p>{selected.note}</p> : null}{selected.lines.map(line => <p className="muted" key={line.id}>{line.productName} · SKU {line.productSku} · UPC {line.productUpc ?? 'ไม่มี'}{line.note ? ` · ${line.note}` : ''}</p>)}<p className="muted">บันทึกการชำระด้วยตนเอง ไม่ใช่ใบเสร็จจากร้านค้า</p></div></details>
+      <div className="page-actions"><button className="secondary-button" onClick={() => download(selected, receiptSource)}><Icon name="export" />ส่งออก CSV</button></div>
+    </div>
   </section>
+  return <section className="round-reports mobile-page" aria-labelledby="round-report-title"><PageHeader title="รายงาน" id="round-report-title" headingRef={heading} onAccount={onAccount} /><div className="page-content reports-content">
+    {!accountId ? <p className="empty-state">เข้าสู่ระบบเพื่อดูรอบซื้อของคุณ</p> : null}
+    <div className="report-controls"><label className="month-control"><span>{/^\d{4}-\d{2}$/.test(month) ? new Intl.DateTimeFormat('th-TH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`)) : 'เลือกเดือน'}</span><Icon name="down" /><input aria-label="เดือน" type="month" min="2000-01" max="2100-12" value={month} onChange={e => setMonth(e.target.value)} /></label><button className="text-button" disabled={!accountId || !online || loading || rounds.syncing} onClick={() => { void rounds.sync(); setReload(v => v + 1) }}>รีเฟรช</button></div>
+    {loading ? <p role="status" className="muted">กำลังโหลดรายงาน…</p> : null}{error || rounds.error ? <p className="error-message" role="alert">{error || rounds.error}</p> : null}
+    {!online ? <p className="pending-caption">ออฟไลน์ · แสดงเฉพาะรอบที่เก็บในเครื่องนี้</p> : null}
+    {data ? <>
+      <div className="monthly-summary"><span>ยอดซื้อเดือนนี้</span><p className="amount">{formatMoney(data.summary.totalPaidMinor)}</p><span className="muted">{data.summary.roundCount} รอบ · ซิงก์แล้ว</span></div>
+      <div className="round-report-list">{data.items.map(round => <button className="report-row" key={round.id} disabled={loading} onClick={() => void openReport(round.id)} aria-label={`ดูรอบ ${round.storeName ?? 'ไม่ระบุร้าน'} ${formatPurchaseDate(round.checkedOutAt)}`}><span className="product-thumb"><Icon name="reportActive" /></span><span className="row-description"><strong>{round.storeName ?? 'ไม่ระบุร้าน'}</strong><small>{formatPurchaseDate(round.checkedOutAt)}</small></span><span className="row-amount"><strong>{formatMoney(round.totalMinor)}</strong><small>{round.lineCount} รายการ</small></span></button>)}</div>
+      {!data.items.length ? <p className="empty-state">ยังไม่มีรอบซื้อในเดือนนี้</p> : null}
+      {data.nextCursor ? <button className="secondary-button" disabled={loading} onClick={() => void load(data.nextCursor)}>ดูรอบก่อนหน้า</button> : null}
+      {data.summary.roundCount ? <details className="disclosure"><summary>สรุปเพิ่มเติม<Icon name="down" /></summary><div className="summary-row"><span>เฉลี่ยต่อรอบ</span><strong>{formatMoney(Math.round(data.summary.totalPaidMinor / data.summary.roundCount))}</strong></div></details> : null}
+    </> : null}
+    {local.length ? <div className="pending-rounds"><h2>{online ? 'รอซิงก์' : 'รอบบนเครื่องนี้'}</h2>{local.map(round => <button className="report-row" key={round.id} onClick={() => { setSelected(localRoundReport(round)); setSource(round.status === 'synced' ? 'cache บนอุปกรณ์ — เคยยืนยัน D1 แล้ว' : 'รอซิงก์') }}><span className="product-thumb pending"><Icon name="clock" /></span><span className="row-description"><strong>{round.payload.storeName ?? 'ไม่ระบุร้าน'}</strong><small>{formatPurchaseDate(round.payload.checkedOutAt)}</small></span><span className="row-amount"><strong>{formatMoney(cartTotal(round.lines))}</strong><small>{round.status === 'pending' ? 'รอซิงก์' : 'cache'}</small></span></button>)}{local.some(round => round.status === 'pending') ? <><button className="secondary-button" disabled={!online || rounds.syncing} onClick={() => void rounds.sync()}>{rounds.syncing ? 'กำลังซิงก์…' : 'ซิงก์อีกครั้ง'}</button><p className="pending-caption">อย่าล้างข้อมูลก่อนซิงก์</p></> : null}</div> : null}
+    {data?.legacy.count ? <p className="muted small-text">รายการเดิม {data.legacy.count} รายการ · {formatMoney(data.legacy.totalMinor)} ไม่รวมในยอดรายรอบ</p> : null}
+    {legacy}
+  </div></section>
 }

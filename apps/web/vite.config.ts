@@ -7,6 +7,6 @@ export default defineConfig(({ mode }) => {
   return {
     base: repositoryBase.endsWith('/') ? repositoryBase : `${repositoryBase}/`,
     plugins: [react()],
+    build: { assetsInlineLimit: 0 },
   }
 })
-

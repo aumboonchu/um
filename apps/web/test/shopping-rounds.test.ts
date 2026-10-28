@@ -135,8 +135,8 @@ describe('clear round reports and scan-first entry', () => {
   })
   it('starts with scan and an empty draft rather than auto-saving individual purchases', () => {
     const html = renderToStaticMarkup(createElement(ShoppingJourney, { accountId: account, apiOrigin: '', online: true, rounds: controller, initialProduct: null, onConsumed: vi.fn() }))
-    expect(html).toContain('เริ่มสแกนสินค้า'); expect(html).toContain('ค้นหาในฐานข้อมูล'); expect(html).toContain('ชำระเงิน / จบรอบนี้')
-    expect(html).not.toContain('บันทึกรายการซื้อ</button>'); expect(html).toContain('ยังไม่รวมในรายงานค่าใช้จ่าย')
+    expect(html).toContain('สแกนชิ้นแรกได้เลย'); expect(html).toContain('พิมพ์รหัส'); expect(html).toContain('เพิ่มจากรูป')
+    expect(html).not.toContain('บันทึกรายการซื้อ</button>'); expect(html).not.toContain('ชำระเงิน ·')
   })
   it('does not show fake round totals for a signed-out account', () => {
     const html = renderToStaticMarkup(createElement(RoundReports, { accountId: null, apiOrigin: '', online: true, version: 0, rounds: controller }))
