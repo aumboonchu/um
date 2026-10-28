@@ -1,4 +1,6 @@
-const CACHE_NAME = 'smartcart-shell-v3'
+const CACHE_NAME = 'smartcart-shell-v4'
+// Release builds replace this list with every emitted JS/CSS/SVG/font asset.
+// A failed precache keeps the previous worker active; activation never precedes it.
 const APP_SHELL = ['./']
 
 self.addEventListener('install', (event) => {

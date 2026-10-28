@@ -20,7 +20,7 @@ Implements the approved “Less is more” [Figma design](https://www.figma.com/
 - Responsive widths include 320 / 390 / 440 px. Primary controls are 56 px high; smaller actions are at least 48 × 48 px.
 - Safe-area insets, Visual Viewport sizing, contextual actions and native numeric/decimal input modes replace the mock phone status bar and keyboard. Device chrome is not rendered as fake web UI.
 - Real camera frames replace the prototype's sample barcode after camera startup. Flash is capability-gated. Existing ZXing decoding and track cleanup remain intact.
-- Shell cache v3 removes only outdated `smartcart-shell-*` caches. It does not clear IndexedDB, authentication storage or outboxes. Cross-origin API/account requests are not cached.
+- Shell cache v4 precaches all emitted UI, scanner, SVG and font assets before activation, with a build-derived revision. It removes only outdated `smartcart-shell-*` caches after successful installation. It does not clear IndexedDB, authentication storage or outboxes. Cross-origin API/account requests are not cached.
 
 ## Verification
 
