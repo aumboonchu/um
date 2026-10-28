@@ -29,8 +29,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install locked dependencies
-        run: npm ci
+      - name: Install locked frontend dependencies
+        run: npm ci --workspace=@smartcart/web --include-workspace-root
       - name: Verify public API origin is configured
         run: test -n "$VITE_API_ORIGIN"
       - name: Build web application
@@ -52,4 +52,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
