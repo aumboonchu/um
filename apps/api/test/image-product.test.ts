@@ -96,6 +96,22 @@ describe('confirmed image product authentication and input validation', () => {
 })
 
 describe('confirmed image persistence and SKU identity', () => {
+  it('saves a confirmed Big C app bottle once with a shop code and no UPC or source URL', async () => {
+    const bottle = { ...input, name: 'คริสตัล น้ำดื่ม 600 มล.', brand: 'คริสตัล',
+      packageSize: '600 มล.', sourcePriceMinor: 600, retailerCode: '13627' }
+    const first = await confirmImageProduct(request(bottle), env)
+    const retry = await confirmImageProduct(request(bottle), env)
+    expect(first.created).toBe(true)
+    expect(first.product).toMatchObject({ name: bottle.name, brand: 'คริสตัล', packageSize: '600 มล.',
+      sourcePriceMinor: 600, upc: null, sourceProductId: null, sourceUrl: null, source: 'smartcart' })
+    expect(retry.created).toBe(false)
+    expect(retry.product.id).toBe(first.product.id)
+    expect(await env.DB.prepare('SELECT retailer_code FROM product_image_imports').first('retailer_code')).toBe('13627')
+    expect(await count('products')).toBe(1)
+    expect(await count('product_source_links')).toBe(0)
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM purchases').first('n')).toBe(0)
+  })
+
   it('saves a confirmed Makro Pro pack as one SKU, preserving pack price and a separate retailer Code on replay', async () => {
     const makro = { ...input, name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12',
       brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, retailerCode: '197584' }

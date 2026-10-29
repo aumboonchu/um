@@ -291,10 +291,10 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     <h3 id={`${id}-title`} className={compact ? 'sr-only' : undefined}>เพิ่มสินค้าจากภาพ</h3>
     {scannedUpc ? <p className="image-import-notice">{compact ? `UPC ที่สแกน: ${scannedUpc}` : `บาร์โค้ดจากการสแกน: ${scannedUpc} — จะเติมให้เมื่อภาพไม่แสดงบาร์โค้ด กรุณาตรวจว่าภาพตรงกับสินค้าที่สแกนก่อนยืนยัน`}</p> : null}
     {!compact ? <>
-    <p className="image-import-notice">รองรับภาพหน้าสินค้าจาก Big C และแอป Makro Pro — แคปภาพให้เห็นชื่อ ขนาดบรรจุ และราคา แล้วเลือกภาพด้านล่าง</p>
+    <p className="image-import-notice">รองรับภาพจากแอป Big C, เว็บ Big C และแอป Makro Pro — ให้เห็นชื่อ ขนาด และราคา</p>
     <p className="image-import-field-help">สินค้าขายเป็นแพ็ก: บันทึกราคาต่อแพ็กและขนาดให้ครบ เมื่อนำไปบันทึกรายการซื้อ จำนวน 1 หมายถึง 1 แพ็ก ไม่ใช่จำนวนชิ้นภายในแพ็ก</p>
     </> : null}
-    {!hasReview ? <p id={`${id}-privacy`} className="image-import-notice">{compact ? 'ใช้ภาพ Big C / Makro Pro · ภาพส่งให้ Cloudflare AI อ่าน กรุณาครอปข้อมูลส่วนตัวออกก่อน' : 'ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน'}</p> : null}
+    {!hasReview ? <p id={`${id}-privacy`} className="image-import-notice">{compact ? 'ภาพจากแอป / เว็บ Big C หรือ Makro Pro · ส่งให้ Cloudflare AI อ่าน กรุณาครอปข้อมูลส่วนตัวออกก่อน' : 'ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน'}</p> : null}
     <label htmlFor={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined}>{compact ? 'เลือกรูปสินค้า' : 'เลือกภาพหน้าจอหรือรูปสินค้า (JPG / PNG / WebP ไม่เกิน 10 MB)'}</label>
     <input ref={fileInput} id={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} disabled={!canImport || busy || locked} aria-describedby={!hasReview ? `${id}-privacy` : undefined} />
     {!canImport ? <p className="status-message">เข้าสู่ระบบด้วย Google และเชื่อมต่ออินเทอร์เน็ตก่อนเพิ่มสินค้าจากภาพ</p> : null}

@@ -140,6 +140,16 @@ describe('image extraction is read-only and requires human review', () => {
 })
 
 describe('confirmed product fields and immutable retry identities', () => {
+  it('prepares a Big C app bottle at 6 baht with the shop code separate from an empty UPC', () => {
+    const bottle: ImageDraft = { name: 'คริสตัล น้ำดื่ม 600 มล.', brand: 'คริสตัล',
+      packageSize: '600 มล.', sourcePriceMinor: 600, upc: null, retailerCode: '13627' }
+    const bottleFields = fieldsFromImageDraft(bottle)
+    expect(bottleFields).toMatchObject({ sourcePrice: '6.00', packageSize: '600 มล.', upc: '', retailerCode: '13627' })
+    expect(createImageImportAttempt(bottleFields, hash, operationId).payload).toMatchObject(bottle)
+    expect(validateImageProductFields({ ...bottleFields, upc: '13627' })).toContain('UPC')
+    expect(validateImageProductFields({ ...bottleFields, upc: '14-1-22146-2-0013' })).toContain('UPC')
+  })
+
   it('prepares a Makro Pro multipack at 45 baht per pack without a fabricated barcode', () => {
     const makroDraft: ImageDraft = { name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12',
       brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: null, retailerCode: '197584' }
@@ -319,7 +329,7 @@ describe('initial screenshot import UI', () => {
     const onProduct = vi.fn()
     const html = renderToStaticMarkup(createElement(ImageImport, { accountId: 'account-a', apiOrigin: 'http://localhost:8787', canImport: true, onProduct }))
     expect(html).toContain('Cloudflare AI')
-    expect(html).toContain('Big C และแอป Makro Pro')
+    expect(html).toContain('แอป Big C, เว็บ Big C และแอป Makro Pro')
     expect(html).toContain('ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล')
     expect(html).toContain('accept="image/jpeg,image/png,image/webp"')
     expect(html).not.toContain('ยืนยันและบันทึกสินค้าเป็น SKU')
@@ -331,5 +341,13 @@ describe('initial screenshot import UI', () => {
     const html = renderToStaticMarkup(createElement(ImageImport, { accountId: null, apiOrigin: 'http://localhost:8787', canImport: false, onProduct: vi.fn() }))
     expect(html.match(/<input[^>]+type="file"[^>]+>/)?.[0]).toContain('disabled=""')
     expect(html).toContain('เข้าสู่ระบบด้วย Google และเชื่อมต่ออินเทอร์เน็ต')
+  })
+
+  it('advertises Big C app screenshots in the compact mobile journey without a new source selector', () => {
+    const html = renderToStaticMarkup(createElement(ImageImport, { accountId: 'account-a', apiOrigin: '', canImport: true, compact: true, onProduct: vi.fn() }))
+    expect(html).toContain('ภาพจากแอป / เว็บ Big C หรือ Makro Pro')
+    expect(html).toContain('Cloudflare AI')
+    expect(html).not.toContain('<select')
+    expect(html).not.toContain('type="checkbox"')
   })
 })

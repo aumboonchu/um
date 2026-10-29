@@ -180,6 +180,46 @@ describe('mobile scan-first journey DOM integration', () => {
     expect(JSON.parse(String(call?.[2]?.body))).toMatchObject({ upc: '3017620422003', retailerCode: '197584', sourcePriceMinor: 4500 })
     expect((screen.getByLabelText('ราคาต่อหน่วย (บาท)') as HTMLInputElement).value).toBe('45.00')
   })
+  it('reviews a Big C app screenshot without a UPC, confirms its SKU, and adds bottles to the open round only', async () => {
+    // Mocked OCR/HTTP responses test the journey, not live vision accuracy or a user's remote database.
+    const bottle = { ...known, id: 'dom-water', sku: 'IMG-WATER', name: 'คริสตัล น้ำดื่ม 600 มล.',
+      brand: 'คริสตัล', packageSize: '600 มล.', upc: null, sourcePriceMinor: 600 }
+    const fallback = transport.send.getMockImplementation()
+    if (!fallback) throw new Error('Missing test transport')
+    transport.send.mockImplementation(async (origin: string, path: string, init?: RequestInit) => {
+      if (path === '/api/v1/products/extract-image') return json({ data: { draft: {
+        name: bottle.name, brand: bottle.brand, packageSize: bottle.packageSize,
+        sourcePriceMinor: 600, upc: null, retailerCode: '13627',
+      }, imageSha256: 'ab'.repeat(32), warnings: [] } })
+      if (path === '/api/v1/products/import-image') return json({ data: bottle }, 201)
+      return fallback(origin, path, init)
+    })
+    await app()
+    fireEvent.click(screen.getByRole('button', { name: 'เพิ่มจากรูป' }))
+    expect(screen.getByText(/ภาพจากแอป \/ เว็บ Big C/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('เลือกรูปสินค้า'), { target: { files: [new File(['jpeg'], 'bigc-app.jpg', { type: 'image/jpeg' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'อ่านข้อมูลจากภาพ' }))
+    expect((await screen.findByLabelText('UPC / EAN (ไม่บังคับ)') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('ชื่อสินค้า') as HTMLInputElement).value).toBe(bottle.name)
+    expect((screen.getByLabelText('ขนาด / บรรจุ') as HTMLInputElement).value).toBe('600 มล.')
+    expect((screen.getByLabelText('ราคาในภาพ (อ้างอิง)') as HTMLInputElement).value).toBe('6.00')
+    expect((screen.getByLabelText('รหัสร้าน (ไม่ใช่บาร์โค้ด)') as HTMLInputElement).value).toBe('13627')
+    expect((screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(transport.send.mock.calls.filter(([, path]) => path === '/api/v1/products/import-image')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' }))
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }))
+    await screen.findByRole('heading', { name: 'เพิ่มเข้ารอบ' })
+    const call = transport.send.mock.calls.find(([, path]) => path === '/api/v1/products/import-image')
+    expect(JSON.parse(String(call?.[2]?.body))).toMatchObject({ confirmed: true, name: bottle.name,
+      packageSize: '600 มล.', sourcePriceMinor: 600, upc: null, retailerCode: '13627' })
+    expect((screen.getByLabelText('ราคาต่อหน่วย (บาท)') as HTMLInputElement).value).toBe('6.00')
+    fireEvent.change(screen.getByLabelText('จำนวน'), { target: { value: '2' } })
+    await addCurrent()
+    const { readLocalRounds } = await import('../src/shopping-rounds')
+    expect((await readLocalRounds('dom-user')).draft?.lines[0]).toMatchObject({ product: { id: bottle.id, upc: null }, quantity: 2, unitPriceMinor: 600 })
+    expect(reports).toHaveLength(0)
+    expect(checkoutBodies).toHaveLength(0)
+  })
   it('requires reviewing a changed cart revision before checkout confirmation becomes enabled again', async () => {
     const { ShoppingJourney } = await import('../src/ShoppingJourney')
     const item = { id: crypto.randomUUID(), product: { ...known, source: 'smartcart' as const }, unitPriceMinor: 2500, quantity: 1, note: null }

@@ -10,6 +10,9 @@ const observed = { name: 'โค้ก น้ำอัดลม รสออร�
 // Expected fields transcribed from the supplied Makro Pro screenshot, not a live AI assertion.
 const makro = { name: 'OREO Sandwich Cookies with Vanilla Flavored Cream 24.6 g x 12', brand: 'OREO',
   packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: null, retailerCode: '197584' }
+// Expected fields transcribed from the Big C app screenshot; this fixture is not a live OCR result.
+const bigcApp = { name: 'คริสตัล น้ำดื่ม 600 มล.', brand: 'คริสตัล',
+  packageSize: '600 มล.', sourcePriceMinor: 600, upc: null, retailerCode: '13627' }
 const jpegHeader = new Uint8Array([255, 216, 255, 224, 0, 16])
 
 describe('image extraction validation', () => {
@@ -20,6 +23,19 @@ describe('image extraction validation', () => {
   it('preserves a Makro Pro multipack and pack price without promoting Code to UPC', () => {
     expect(parseImageDraft(JSON.stringify(makro))).toEqual(makro)
     expect(parseImageDraft(JSON.stringify({ ...makro, upc: '197584' })).upc).toBeNull()
+  })
+
+  it('accepts a Big C app bottle without a URL or a fabricated barcode', () => {
+    expect(parseImageDraft(JSON.stringify(bigcApp))).toEqual(bigcApp)
+    expect(parseImageDraft(JSON.stringify({ ...bigcApp, upc: '13627' })).upc).toBeNull()
+    expect(parseImageDraft(JSON.stringify({ ...bigcApp, upc: '14-1-22146-2-0013' })).upc).toBeNull()
+  })
+
+  it('drops recognizable Thai FDA registration from retailerCode without dropping ordinary shop codes', () => {
+    for (const retailerCode of ['14-1-22146-2-0013', '14 - 1 - 22146 - 2 - 0013']) {
+      expect(parseImageDraft(JSON.stringify({ ...bigcApp, retailerCode })).retailerCode).toBeNull()
+    }
+    expect(parseImageDraft(JSON.stringify({ ...bigcApp, retailerCode: 'SHOP-13627' })).retailerCode).toBe('SHOP-13627')
   })
 
   it.each(['not json', '[]', '{}', '{"name":null}', 'x'.repeat(8001)])('rejects unreadable output', (value) => {
@@ -65,6 +81,14 @@ describe('image extraction validation', () => {
 })
 
 describe('vision call', () => {
+  it('instructs Big C app extraction to separate bottle price, shop code, FDA number and gallery count', async () => {
+    const run = vi.fn(async (_model: string, _inputs: ChatCompletionsInput) => ({ choices: [{ message: { content: JSON.stringify(bigcApp) }, finish_reason: 'stop' }] }))
+    expect(await inferProductImage({ run }, jpegHeader, 'image/jpeg')).toEqual(bigcApp)
+    const prompt = JSON.stringify(run.mock.calls[0][1].messages)
+    for (const rule of ['Big C mobile app', 'product URL is not required', 'sourcePriceMinor 600',
+      '13627', 'FDA / อย.', 'neither a UPC nor a retailerCode', '1/5', 'not a pack count']) expect(prompt).toContain(rule)
+  })
+
   it('instructs the model to distinguish Makro pack price, per-unit price, old price and shop Code', async () => {
     const run = vi.fn(async (_model: string, _inputs: ChatCompletionsInput) => ({ choices: [{ message: { content: JSON.stringify(makro) }, finish_reason: 'stop' }] }))
     expect(await inferProductImage({ run }, jpegHeader, 'image/jpeg')).toEqual(makro)
