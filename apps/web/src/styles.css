@@ -43,6 +43,8 @@ fieldset { min-width: 0; }
 .text-danger { color: var(--sc-color-red); }
 .icon-button { display: inline-flex; flex: 0 0 48px; align-items: center; justify-content: center; width: 48px; min-width: 48px; height: 48px; min-height: 48px; padding: 0; border-radius: 999px; background: transparent; }
 .icon-button.tonal { background: var(--sc-color-soft); }
+.account-photo { display: block; flex: 0 0 auto; width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+.account-avatar .account-photo { width: 56px; height: 56px; }
 .app-shell { display: block; min-height: 100dvh; padding: 0; }
 .app-frame { --sc-nav-height: 0px; --sc-sync-height: 0px; display: flex; flex-direction: column; width: min(100%, 480px); min-height: 100dvh; margin: 0 auto; background: #fff; }
 .app-frame.with-navigation { --sc-nav-height: calc(67px + env(safe-area-inset-bottom, 0px)); }

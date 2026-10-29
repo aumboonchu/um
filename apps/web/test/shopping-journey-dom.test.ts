@@ -9,7 +9,7 @@ const transport = vi.hoisted(() => ({ send: vi.fn() }))
 vi.mock('../src/auth-client', async importActual => ({ ...await importActual<typeof import('../src/auth-client')>(), apiFetch: transport.send }))
 vi.mock('../src/BarcodeScanner', () => ({ default: ({ disabled, onDetected }: { disabled: boolean; onDetected: (v: string) => void }) => createElement('button', { disabled, onClick: () => onDetected('8851959129012') }, 'กล้องทดสอบสแกนสินค้า') }))
 vi.mock('../src/image-import', async importActual => ({ ...await importActual<typeof import('../src/image-import')>(), prepareImageUpload: async () => new Blob(['prepared'], { type: 'image/jpeg' }), imageFingerprint: async () => 'ab'.repeat(32) }))
-let reports: RoundReport[], failCheckout: boolean, added: boolean, checkoutBodies: string[], currentUser: string, imageUpc: string | null
+let reports: RoundReport[], failCheckout: boolean, added: boolean, checkoutBodies: string[], currentUser: string, imageUpc: string | null, avatarUrl: string | null
 const known = { id: 'dom-milk', sku: 'UPC-MILK', name: 'นมทดสอบ', upc: '8851959129012', brand: null, packageSize: '1 แพ็ก', imageUrl: null, source: 'smartcart', sourcePriceMinor: 2500, regularPriceMinor: null, fetchedAt: null }
 const unknown = { ...known, id: 'dom-oreo', sku: 'UPC-OREO', upc: '3017620422003', name: 'OREO เพิ่มใหม่', packageSize: null, sourcePriceMinor: null }
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
@@ -19,16 +19,17 @@ beforeEach(() => {
   Object.defineProperty(navigator, 'storage', { configurable: true, value: { persisted: async () => false, persist: async () => false } })
   Element.prototype.scrollIntoView = vi.fn(); vi.spyOn(window, 'scrollTo').mockImplementation(() => {}); localStorage.clear(); sessionStorage.clear()
   URL.createObjectURL = vi.fn(() => 'blob:dom-test'); URL.revokeObjectURL = vi.fn()
-  reports = []; failCheckout = false; added = false; checkoutBodies = []; currentUser = 'dom-user'; imageUpc = null
+  reports = []; failCheckout = false; added = false; checkoutBodies = []; currentUser = 'dom-user'; imageUpc = null; avatarUrl = null
   transport.send.mockReset().mockImplementation(async (_origin: string, path: string, init?: RequestInit) => {
     if (path === '/auth/config') return json({ data: { googleEnabled: true } })
-    if (path === '/auth/me') return json({ data: { authenticated: true, account: { id: currentUser, displayName: currentUser, primaryEmail: null } } })
+    if (path === '/auth/me') return json({ data: { authenticated: true, account: { id: currentUser, displayName: currentUser, primaryEmail: null, avatarUrl } } })
     if (path.startsWith('/api/v1/products/upc/8851959129012')) return json({ data: known })
     if (path.startsWith('/api/v1/products/upc/3017620422003')) return added ? json({ data: unknown }) : json({ error: { code: 'PRODUCT_NOT_FOUND' } }, 404)
     if (path === '/api/v1/products') { added = true; return json({ data: unknown }, 201) }
     if (path === '/api/v1/products/extract-image') return json({ data: { draft: { name: unknown.name, brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: imageUpc, retailerCode: '197584' }, imageSha256: 'ab'.repeat(32), warnings: [] } })
     if (path === '/api/v1/products/import-image') { added = true; return json({ data: { ...unknown, sourcePriceMinor: 4500 } }, 201) }
     if (path.startsWith('/api/v1/purchases?')) return json({ data: { items: [], nextCursor: null } })
+    if (path.startsWith('/api/v1/products/mine?')) return json({ data: { items: [], nextCursor: null } })
     if (path === '/api/v1/rounds/checkout') {
       checkoutBodies.push(String(init?.body)); if (failCheckout) throw new TypeError('offline test')
       const p = JSON.parse(String(init?.body)) as RoundPayload
@@ -76,6 +77,28 @@ async function savedDraft() {
   await screen.findByRole('heading', { name: 'รอบนี้' })
 }
 describe('mobile scan-first journey DOM integration', () => {
+  it('shows the authenticated Google photo across all primary tabs and account, without leaking it to a different account', async () => {
+    avatarUrl = 'https://lh3.googleusercontent.com/a/dom-avatar'
+    await app()
+    function photo() { return screen.getByRole('button', { name: 'บัญชี' }).querySelector('.account-photo') }
+    expect(photo()?.getAttribute('src')).toBe(avatarUrl)
+    fireEvent.click(screen.getByRole('button', { name: 'รายงาน' }))
+    await screen.findByRole('heading', { name: 'รายงาน' })
+    expect(photo()?.getAttribute('src')).toBe(avatarUrl)
+    fireEvent.click(screen.getByRole('button', { name: 'สินค้า' }))
+    await screen.findByRole('heading', { name: 'สินค้า' })
+    expect(photo()?.getAttribute('src')).toBe(avatarUrl)
+    fireEvent.click(screen.getByRole('button', { name: 'บัญชี' }))
+    await screen.findByRole('heading', { name: 'บัญชี' })
+    expect(document.querySelector('.account-identity .account-photo')?.getAttribute('src')).toBe(avatarUrl)
+    expect((screen.getByRole('button', { name: 'อัปเดตรูป Google', hidden: true }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'กลับ' }))
+    currentUser = 'dom-other'; avatarUrl = null
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: null, storageArea: localStorage })))
+    await waitFor(() => expect(photo()).toBeNull())
+    expect(screen.getByRole('button', { name: 'บัญชี' }).querySelector('.sc-icon')).not.toBeNull()
+  })
+
   it('keeps three primary tabs, puts account behind its icon, and hides tabs while entering price', async () => {
     await app()
     expect(within(screen.getByRole('navigation', { name: 'เมนูหลัก' })).getAllByRole('button')).toHaveLength(3)

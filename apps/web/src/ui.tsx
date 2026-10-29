@@ -1,4 +1,6 @@
-import { useEffect, type ReactNode, type Ref } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode, type Ref } from 'react'
+
+export const AccountPhotoContext = createContext<string | null>(null)
 
 const files = import.meta.glob<string>('./assets/figma/*.svg', { eager: true, query: '?url', import: 'default' })
 // Exact exported Figma assets. Intrinsic dimensions are intentionally preserved.
@@ -21,11 +23,18 @@ export function Icon({ name }: { name: IconName }) {
   const [file, width, height] = iconAssets[name]
   return <img className="sc-icon" src={files[`./assets/figma/${file}`]} width={width} height={height} alt="" aria-hidden="true" draggable={false} />
 }
+export function AccountAvatar({ large = false }: { large?: boolean }) {
+  const avatarUrl = useContext(AccountPhotoContext)
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  return avatarUrl && avatarUrl !== failedUrl
+    ? <img className="account-photo" src={avatarUrl} alt="" width={large ? 56 : 48} height={large ? 56 : 48} referrerPolicy="no-referrer" onError={() => setFailedUrl(avatarUrl)} />
+    : <Icon name={large ? 'userLarge' : 'user'} />
+}
 export function PageHeader({ title, id, headingRef, onBack, onAccount, trailing }: { title: string; id?: string; headingRef?: Ref<HTMLHeadingElement>; onBack?: () => void; onAccount?: () => void; trailing?: ReactNode }) {
   return <header className={`page-header${onBack ? ' page-header-back' : ''}`}>
     {onBack ? <button className="icon-button" type="button" aria-label="กลับ" onClick={onBack}><Icon name="back" /></button> : null}
     <h1 id={id} ref={headingRef} tabIndex={-1}>{title}</h1>
-    {onAccount ? <button className="icon-button tonal" type="button" aria-label="บัญชี" onClick={onAccount}><Icon name="user" /></button> : null}
+    {onAccount ? <button className="icon-button tonal" type="button" aria-label="บัญชี" onClick={onAccount}><AccountAvatar /></button> : null}
     {trailing}
   </header>
 }

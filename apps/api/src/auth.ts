@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { googleAvatarUrl } from './google-avatar'
 
 export type AuthEnv = Env & {
   GOOGLE_CLIENT_ID?: string
@@ -19,6 +20,7 @@ type UserRow = {
   id: string
   display_name: string | null
   primary_email: string | null
+  avatar_url: string | null
 }
 
 type GoogleTokenResponse = {
@@ -30,12 +32,14 @@ type GoogleProfile = {
   subject: string
   email: string | null
   displayName: string | null
+  avatarUrl: string | null
 }
 
 export type SmartCartAccount = {
   id: string
   displayName: string | null
   primaryEmail: string | null
+  avatarUrl: string | null
 }
 
 const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -204,7 +208,7 @@ export async function currentAccount(request: Request, env: AuthEnv): Promise<Sm
   if (!sessionToken) return null
 
   const row = await env.DB.prepare(
-    `SELECT users.id, users.display_name, users.primary_email
+    `SELECT users.id, users.display_name, users.primary_email, users.avatar_url
        FROM auth_sessions
        INNER JOIN users ON users.id = auth_sessions.user_id
       WHERE auth_sessions.token_hash = ?
@@ -215,7 +219,7 @@ export async function currentAccount(request: Request, env: AuthEnv): Promise<Sm
     .first<UserRow>()
 
   if (!row) return null
-  return { id: row.id, displayName: row.display_name, primaryEmail: row.primary_email }
+  return { id: row.id, displayName: row.display_name, primaryEmail: row.primary_email, avatarUrl: googleAvatarUrl(row.avatar_url) }
 }
 
 export async function revokeCurrentSession(request: Request, env: AuthEnv): Promise<void> {
@@ -283,12 +287,13 @@ async function verifyGoogleIdentity(
     subject: payload.sub,
     email: typeof payload.email === 'string' ? payload.email : null,
     displayName: typeof payload.name === 'string' ? payload.name : null,
+    avatarUrl: googleAvatarUrl(payload.picture),
   }
 }
 
 async function findOrCreateGoogleAccount(profile: GoogleProfile, env: AuthEnv): Promise<SmartCartAccount> {
   const identity = await env.DB.prepare(
-    `SELECT users.id, users.display_name, users.primary_email
+    `SELECT users.id, users.display_name, users.primary_email, users.avatar_url
        FROM user_identities
        INNER JOIN users ON users.id = user_identities.user_id
       WHERE provider = 'google' AND issuer = ? AND provider_subject = ?`,
@@ -297,22 +302,24 @@ async function findOrCreateGoogleAccount(profile: GoogleProfile, env: AuthEnv): 
     .first<UserRow>()
 
   if (identity) {
-    await env.DB.prepare(
-      `UPDATE user_identities SET last_login_at = ?
-        WHERE provider = 'google' AND issuer = ? AND provider_subject = ?`,
-    )
-      .bind(new Date().toISOString(), profile.issuer, profile.subject)
-      .run()
-    return { id: identity.id, displayName: identity.display_name, primaryEmail: identity.primary_email }
+    const now = new Date().toISOString()
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE user_identities SET last_login_at = ?
+        WHERE provider = 'google' AND issuer = ? AND provider_subject = ?`)
+        .bind(now, profile.issuer, profile.subject),
+      env.DB.prepare('UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?')
+        .bind(profile.avatarUrl, now, identity.id),
+    ])
+    return { id: identity.id, displayName: identity.display_name, primaryEmail: identity.primary_email, avatarUrl: profile.avatarUrl }
   }
 
   const userId = crypto.randomUUID()
   const identityId = crypto.randomUUID()
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO users (id, display_name, primary_email, updated_at)
-       VALUES (?, ?, ?, ?)`,
-    ).bind(userId, profile.displayName, profile.email, new Date().toISOString()),
+      `INSERT INTO users (id, display_name, primary_email, avatar_url, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).bind(userId, profile.displayName, profile.email, profile.avatarUrl, new Date().toISOString()),
     env.DB.prepare(
       `INSERT INTO user_identities
         (id, user_id, provider, issuer, provider_subject, provider_email, last_login_at)
@@ -327,7 +334,7 @@ async function findOrCreateGoogleAccount(profile: GoogleProfile, env: AuthEnv): 
     ),
   ])
 
-  return { id: userId, displayName: profile.displayName, primaryEmail: profile.email }
+  return { id: userId, displayName: profile.displayName, primaryEmail: profile.email, avatarUrl: profile.avatarUrl }
 }
 
 async function createSession(userId: string, env: AuthEnv): Promise<string> {
@@ -413,4 +420,3 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 function isGoogleTokenResponse(payload: unknown): payload is GoogleTokenResponse {
   return typeof payload === 'object' && payload !== null && 'id_token' in payload && typeof payload.id_token === 'string'
 }
-

@@ -5,7 +5,7 @@ import { RoundReports } from './RoundReports'
 import { useShoppingRounds } from './useShoppingRounds'
 import { HomeSummary, ProductDetailView, PurchaseDetailView } from './AccountViews'
 import { getProductDetail, type ProductDetail } from './purchase-management'
-import { Icon, PageHeader, ProductThumb, useMobileViewport } from './ui'
+import { AccountAvatar, AccountPhotoContext, Icon, PageHeader, ProductThumb, useMobileViewport } from './ui'
 import {
   getPendingOperationCount,
   syncPendingOperations,
@@ -13,7 +13,7 @@ import {
   type CachedProduct,
 } from './offline'
 
-type Account = { id: string; displayName: string | null; primaryEmail: string | null }
+type Account = { id: string; displayName: string | null; primaryEmail: string | null; avatarUrl?: string | null }
 type AuthResponse = { data: { authenticated: boolean; account: Account | null } }
 type Product = CachedProduct
 type AppView = 'home' | 'purchase' | 'history' | 'products' | 'account'
@@ -318,7 +318,7 @@ function App() {
   const busySync = isSyncing || rounds.syncing
   const showSync = !isOnline || pending > 0 || busySync || pendingSyncCount === null || Boolean(rounds.error)
   const showNavigation = !detail && activeView !== 'account' && activeView !== 'home' && !(activeView === 'purchase' && shoppingFocused) && !(activeView === 'history' && reportFocused)
-  return <main className="app-shell"><div className={`app-frame${account && !isLoading && showNavigation ? ' with-navigation' : ''}${account && !isLoading && showSync ? ' has-sync' : ''}`} data-view={activeView}>
+  return <AccountPhotoContext.Provider value={account?.avatarUrl ?? null}><main className="app-shell"><div className={`app-frame${account && !isLoading && showNavigation ? ' with-navigation' : ''}${account && !isLoading && showSync ? ' has-sync' : ''}`} data-view={activeView}>
     {!account || isLoading ? <section className="mobile-page login-page" aria-labelledby="login-title">
       <PageHeader title="SmartCart" id="login-title" />
       <div className="page-content login-content"><div className="scan-invitation"><span className="scan-mark"><Icon name="scanHero" /></span><h2>ซื้อสินค้าเป็นรอบ</h2><p className="muted">สแกน · บันทึก · ดูยอดซื้อ</p></div>
@@ -340,11 +340,11 @@ function App() {
       </aside> : null}
 
       {activeView === 'account' && !detail ? <section className="mobile-page focused-page" aria-labelledby="account-title"><PageHeader title="บัญชี" id="account-title" onBack={() => navigate(accountReturnView)} /><div className="page-content account-content">
-        <div className="account-identity"><span className="account-avatar"><Icon name="userLarge" /></span><div><strong>{account.displayName ?? 'บัญชี Google'}</strong>{account.primaryEmail ? <span className="muted">{account.primaryEmail}</span> : null}<small className="green-text">เข้าสู่ระบบแล้ว</small></div></div>
+        <div className="account-identity"><span className="account-avatar"><AccountAvatar large /></span><div><strong>{account.displayName ?? 'บัญชี Google'}</strong>{account.primaryEmail ? <span className="muted">{account.primaryEmail}</span> : null}<small className="green-text">เข้าสู่ระบบแล้ว</small></div></div>
         <h2>ข้อมูลของฉัน</h2><div className="summary-row"><span>สถานะ</span><strong className={pending || pendingSyncCount === null || rounds.error ? 'pending-caption' : 'green-text'}>{pending ? `รอซิงก์ ${rounds.pending.length} รอบ${pendingSyncCount ? ` / ${pendingSyncCount} รายการ` : ''}` : pendingSyncCount === null || rounds.error ? 'ตรวจสอบไม่ได้' : busySync ? 'กำลังซิงก์…' : 'ซิงก์แล้ว'}</strong></div>
         {syncMessage ? <p className="inline-message" role="status">{syncMessage}</p> : null}
         <button className="secondary-button" onClick={() => void syncQueue()} disabled={!isOnline || busySync || (!pending && pendingSyncCount !== null && !rounds.error)}>{busySync ? 'กำลังซิงก์…' : 'ซิงก์ข้อมูล'}</button>
-        <details className="disclosure"><summary>การเข้าสู่ระบบ<Icon name="down" /></summary><p className="muted">{sessionInfo?.remembered ? `จดจำถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร ใช้ได้เฉพาะแท็บนี้'}</p></details>
+        <details className="disclosure"><summary>การเข้าสู่ระบบ<Icon name="down" /></summary><div><p className="muted">{sessionInfo?.remembered ? `จดจำถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร ใช้ได้เฉพาะแท็บนี้'}</p><button type="button" className="secondary-button" disabled={!isOnline || isSigningIn} onClick={() => void signInWithGoogle()}>{isSigningIn ? 'กำลังเปิด Google…' : 'อัปเดตรูป Google'}</button></div></details>
         <details className="disclosure"><summary>พื้นที่เก็บข้อมูลออฟไลน์<Icon name="down" /></summary><div><p className="muted">ข้อมูลที่ยังไม่ซิงก์อาจสูญหายเมื่อเครื่องล้างพื้นที่ อย่าล้างข้อมูลเว็บก่อนซิงก์สำเร็จ</p><button className="secondary-button" onClick={() => { void requestPersistentStorage().then(result => setStorageInfo(result ? 'ได้รับสิทธิ์เก็บข้อมูลแล้ว แต่ยังควรซิงก์เสมอ' : 'เครื่องไม่ได้อนุญาต ยังบันทึกบนเครื่องและซิงก์ได้ตามปกติ')).catch(() => setStorageInfo('ตรวจสอบสิทธิ์ไม่ได้ โปรดซิงก์ข้อมูลเมื่อออนไลน์')) }}>ขอเก็บข้อมูลบนเครื่อง</button>{storageInfo ? <p role="status" className="muted">{storageInfo}</p> : null}</div></details>
         <details className="disclosure"><summary>ข้อมูลเพิ่มเติม<Icon name="down" /></summary><div><button className="secondary-button" onClick={() => navigate('home')}>ภาพรวมรายการซื้อ</button></div></details>
         {authMessage ? <p role="status" className="error-message">{authMessage}</p> : null}
@@ -377,7 +377,7 @@ function App() {
 
       {showNavigation ? <nav className="bottom-nav" aria-label="เมนูหลัก">{([{ view: 'purchase', label: 'ซื้อสินค้า', activeIcon: 'scan', icon: 'scanMuted' }, { view: 'history', label: 'รายงาน', activeIcon: 'reportActive', icon: 'report' }, { view: 'products', label: 'สินค้า', activeIcon: 'boxActive', icon: 'boxMuted' }] as const).map(tab => <button key={tab.view} className={activeView === tab.view ? 'nav-active' : ''} aria-current={activeView === tab.view ? 'page' : undefined} disabled={rounds.busy} onClick={() => navigate(tab.view)}><span className="nav-icon"><Icon name={activeView === tab.view ? tab.activeIcon : tab.icon} /></span><span>{tab.label}</span></button>)}</nav> : null}
     </>}
-  </div></main>
+  </div></main></AccountPhotoContext.Provider>
 }
 
 function SearchForm({ value, setValue, onSubmit, placeholder }: { value: string; setValue: (value: string) => void; onSubmit: () => void; placeholder: string }) {

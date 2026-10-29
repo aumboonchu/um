@@ -27,10 +27,10 @@ async function seedLogin(expiresAt = new Date(Date.now() + 60_000).toISOString()
     .bind(await hash(loginCode), userId, await hash(verifier, 'base64'), expiresAt).run()
 }
 
-function exchange(codeVerifier = verifier, origin: string = env.APP_ORIGIN) {
+function exchange(codeVerifier = verifier, origin: string = env.APP_ORIGIN, code = loginCode) {
   return SELF.fetch('https://example.com/auth/exchange', {
     method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: loginCode, codeVerifier }),
+    body: JSON.stringify({ code, codeVerifier }),
   })
 }
 
@@ -84,7 +84,7 @@ describe('Google Login and cross-site browser sessions', () => {
     const { data } = await response.json<{ data: { sessionToken: string } }>()
     const headers = { Origin: env.APP_ORIGIN, Authorization: `Bearer ${data.sessionToken}` }
     const me = await SELF.fetch('https://example.com/auth/me', { headers })
-    expect(await me.json()).toMatchObject({ data: { authenticated: true, account: { id: userId } } })
+    expect(await me.json()).toMatchObject({ data: { authenticated: true, account: { id: userId, avatarUrl: null } } })
     const stored = await env.DB.prepare('SELECT token_hash FROM auth_sessions WHERE user_id = ?').bind(userId).first<{ token_hash: string }>()
     expect(stored?.token_hash).toBe(await hash(data.sessionToken))
     expect((await exchange()).status).toBe(400)
@@ -134,20 +134,24 @@ describe('Google Login and cross-site browser sessions', () => {
     expect(await me.json()).toMatchObject({ data: { authenticated: false } })
   })
 
-  it('completes the Google callback and issues only a browser-bound code, then rejects callback replay', async () => {
+  it('saves and refreshes the verified Google picture while preserving sessions, PKCE and callback replay protection', async () => {
     const challenge = await hash(verifier, 'base64')
-    const start = await app.fetch(new Request(`https://example.com/auth/google/start?app_code_challenge=${challenge}`), configuredEnv)
-    const state = new URL(start.headers.get('Location')!).searchParams.get('state')!
-    const transaction = await env.DB.prepare('SELECT nonce FROM auth_transactions WHERE state_hash = ?').bind(await hash(state)).first<{ nonce: string }>()
     const keys = await generateKeyPair('RS256', { extractable: true })
     const jwk = await exportJWK(keys.publicKey)
-    const idToken = await new SignJWT({ nonce: transaction!.nonce, email: 'test@example.com', name: 'Google test' })
-      .setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer('https://accounts.google.com')
-      .setAudience(configuredEnv.GOOGLE_CLIENT_ID).setSubject('google-test-subject').setIssuedAt().setExpirationTime('5m').sign(keys.privateKey)
-    fetchMock.get('https://oauth2.googleapis.com').intercept({ path: '/token', method: 'POST' }).reply(200, JSON.stringify({ id_token: idToken }), { headers: { 'Content-Type': 'application/json' } })
     fetchMock.get('https://www.googleapis.com').intercept({ path: '/oauth2/v3/certs' }).reply(200, JSON.stringify({ keys: [{ ...jwk, kid: 'test-key', alg: 'RS256', use: 'sig' }] }), { headers: { 'Content-Type': 'application/json' } })
-    const callbackUrl = `https://example.com/auth/google/callback?code=google-code&state=${state}`
-    const response = await app.fetch(new Request(callbackUrl), configuredEnv)
+    async function login(picture: unknown, audience = configuredEnv.GOOGLE_CLIENT_ID) {
+      const start = await app.fetch(new Request(`https://example.com/auth/google/start?app_code_challenge=${challenge}`), configuredEnv)
+      const state = new URL(start.headers.get('Location')!).searchParams.get('state')!
+      const transaction = await env.DB.prepare('SELECT nonce FROM auth_transactions WHERE state_hash = ?').bind(await hash(state)).first<{ nonce: string }>()
+      const idToken = await new SignJWT({ nonce: transaction!.nonce, email: 'test@example.com', name: 'Google test', ...(picture === undefined ? {} : { picture }) })
+        .setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer('https://accounts.google.com')
+        .setAudience(audience).setSubject('google-test-subject').setIssuedAt().setExpirationTime('5m').sign(keys.privateKey)
+      fetchMock.get('https://oauth2.googleapis.com').intercept({ path: '/token', method: 'POST' }).reply(200, JSON.stringify({ id_token: idToken }), { headers: { 'Content-Type': 'application/json' } })
+      const callbackUrl = `https://example.com/auth/google/callback?code=google-code&state=${state}`
+      return { response: await app.fetch(new Request(callbackUrl), configuredEnv), callbackUrl }
+    }
+    const avatarUrl = 'https://lh3.googleusercontent.com/a/avatar-test=s96-c'
+    const { response, callbackUrl } = await login(avatarUrl)
     expect(response.status).toBe(302)
     const destination = new URL(response.headers.get('Location')!)
     expect(`${destination.origin}${destination.pathname}`).toBe(env.APP_URL)
@@ -155,7 +159,27 @@ describe('Google Login and cross-site browser sessions', () => {
     expect(response.headers.get('Set-Cookie')).toBeNull()
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM auth_sessions').first('count')).toBe(0)
     expect((await app.fetch(new Request(callbackUrl), configuredEnv)).headers.get('Location')).toBe(`${env.APP_URL}?auth=failed`)
+    const handoff = new URLSearchParams(destination.hash.slice(1)).get('login_code')!
+    const session = await exchange(verifier, env.APP_ORIGIN, handoff)
+    const { data } = await session.json<{ data: { sessionToken: string } }>()
+    const headers = { Origin: env.APP_ORIGIN, Authorization: `Bearer ${data.sessionToken}` }
+    async function me() { return (await SELF.fetch('https://example.com/auth/me', { headers })).json() }
+    expect(await me()).toMatchObject({ data: { authenticated: true, account: { avatarUrl } } })
+    expect(await env.DB.prepare('SELECT avatar_url FROM users WHERE primary_email = ?').bind('test@example.com').first('avatar_url')).toBe(avatarUrl)
+
+    const unverified = await login('https://lh3.googleusercontent.com/a/unverified', 'wrong-client.apps.googleusercontent.com')
+    expect(unverified.response.headers.get('Location')).toBe(`${env.APP_URL}?auth=failed`)
+    expect(await me()).toMatchObject({ data: { account: { avatarUrl } } })
+
+    const updatedUrl = 'https://lh3.googleusercontent.com/a/avatar-updated=s96-c'
+    expect((await login(updatedUrl)).response.headers.get('Location')).toContain('#login_code=')
+    expect(await me()).toMatchObject({ data: { authenticated: true, account: { avatarUrl: updatedUrl } } })
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM user_identities WHERE provider_subject = ?').bind('google-test-subject').first('count')).toBe(1)
+    expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM auth_sessions').first('count')).toBe(1)
+    for (const missingOrUnsafe of [undefined, 'https://evil.example/photo.jpg']) {
+      expect((await login(missingOrUnsafe)).response.headers.get('Location')).toContain('#login_code=')
+      expect(await me()).toMatchObject({ data: { authenticated: true, account: { avatarUrl: null } } })
+    }
     fetchMock.assertNoPendingInterceptors()
   })
 })
-
