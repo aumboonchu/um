@@ -90,9 +90,11 @@ export async function checkoutRound(request: Request, userId: string, env: AuthE
     FROM json_each(?)`).bind(userId, userId, input.storeName, input.checkedOutAt, input.operationId, now, now, linesJson))
   statements.push(env.DB.prepare(`INSERT INTO shopping_round_lines
     (round_id, position, purchase_id, product_id, product_name, product_sku, product_upc, package_size, unit_price_minor, quantity, total_minor, note)
-    SELECT ?, CAST(j.key AS INTEGER), p.id, p.product_id, c.name, c.sku, c.upc, c.package_size, p.unit_price_minor, p.quantity, p.total_minor, p.note
+    SELECT ?, CAST(j.key AS INTEGER), p.id, p.product_id, COALESCE(pp.name, c.name), c.sku, c.upc,
+      CASE WHEN pp.product_id IS NULL THEN c.package_size ELSE pp.package_size END, p.unit_price_minor, p.quantity, p.total_minor, p.note
     FROM json_each(?) j JOIN purchases p ON p.id = json_extract(j.value, '$.id') AND p.user_id = ? AND p.shopping_round_id = ?
-    JOIN products c ON c.id = p.product_id`).bind(input.operationId, linesJson, userId, input.operationId))
+    JOIN products c ON c.id = p.product_id
+    LEFT JOIN product_profiles pp ON pp.product_id = c.id AND pp.user_id = p.user_id`).bind(input.operationId, linesJson, userId, input.operationId))
   try { await env.DB.batch(statements) }
   catch (error) {
     const concurrent = await find(input.operationId, env)

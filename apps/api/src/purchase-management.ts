@@ -1,5 +1,6 @@
 import type { AuthEnv } from './auth'
 import { listPurchaseHistory, toPurchaseHistoryItem, type PurchaseRow } from './history'
+import { withProductProfile } from './product-profile'
 
 export class PurchaseManagementError extends Error {
   constructor(readonly code: 'INVALID_PURCHASE_CHANGE' | 'INVALID_MONTH' | 'PURCHASE_NOT_FOUND' | 'PRODUCT_NOT_FOUND' | 'PURCHASE_CONFLICT' | 'OPERATION_CONFLICT' | 'ROUND_LOCKED', readonly status: 400 | 404 | 409) { super(code) }
@@ -9,10 +10,12 @@ type Receipt = { purchase_id: string; action: 'edit' | 'delete'; payload_hash: s
 export type MutationResult = { operationId: string; purchaseId: string; action: 'edit' | 'delete'; revision: number }
 type EditFields = { unitPriceMinor: number; quantity: number; purchasedAt: string; storeName: string | null; note: string | null }
 
-const SELECT_PURCHASE = `SELECT p.id, p.product_id, products.name AS product_name, products.sku AS product_sku,
-  products.upc AS product_upc, products.brand AS product_brand, products.package_size, products.image_url,
+const SELECT_PURCHASE = `SELECT p.id, p.product_id, COALESCE(pp.name, products.name) AS product_name, products.sku AS product_sku,
+  products.upc AS product_upc, CASE WHEN pp.product_id IS NULL THEN products.brand ELSE pp.brand END AS product_brand,
+  CASE WHEN pp.product_id IS NULL THEN products.package_size ELSE pp.package_size END AS package_size, products.image_url,
   stores.name AS store_name, p.unit_price_minor, p.quantity, p.total_minor, p.purchased_at, p.note, p.revision, p.updated_at, p.shopping_round_id
   FROM purchases p JOIN products ON products.id = p.product_id
+  LEFT JOIN product_profiles pp ON pp.product_id = p.product_id AND pp.user_id = p.user_id
   LEFT JOIN stores ON stores.id = p.store_id AND stores.user_id = p.user_id`;
 
 function idValue(id: string): string {
@@ -44,7 +47,7 @@ export async function purchaseDetail(id: string, userId: string, env: AuthEnv) {
   return { ...toPurchaseHistoryItem(row), revision: row.revision, updatedAt: row.updated_at, packageSize: row.package_size, shoppingRoundId: row.shopping_round_id }
 }
 
-export async function productDetail(id: string, userId: string, env: AuthEnv) {
+export async function productDetail(id: string, userId: string, env: AuthEnv, personalized = true) {
   idValue(id)
   // Catalog fields are shared, but access and every price/statistic below are account-scoped.
   const product = await env.DB.prepare(`SELECT id, sku, upc, name, brand, package_size AS packageSize, unit, category, image_url AS imageUrl
@@ -58,7 +61,7 @@ export async function productDetail(id: string, userId: string, env: AuthEnv) {
     FROM purchases WHERE user_id = ? AND product_id = ? AND deleted_at IS NULL`).bind(userId, id).first()
   const recent = await env.DB.prepare(`${SELECT_PURCHASE} WHERE p.user_id = ? AND p.product_id = ? AND p.deleted_at IS NULL
     ORDER BY p.purchased_at DESC, p.id DESC LIMIT 20`).bind(userId, id).all<DetailRow>()
-  return { ...product, ...stats, recentPurchases: recent.results.map(toPurchaseHistoryItem) }
+  return { ...(personalized ? await withProductProfile(product, userId, env) : { ...product, profileRevision: 0 }), ...stats, recentPurchases: recent.results.map(toPurchaseHistoryItem) }
 }
 
 function invalid(): never { throw new PurchaseManagementError('INVALID_PURCHASE_CHANGE', 400) }

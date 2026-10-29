@@ -301,7 +301,7 @@ function App() {
   }
   function buyAgain(item: ProductDetail) {
     setProduct({ id: item.id, sku: item.sku, upc: item.upc, name: item.name, brand: item.brand, packageSize: item.packageSize, imageUrl: item.imageUrl,
-      source: 'smartcart', sourcePriceMinor: item.recentPurchases[0]?.unitPriceMinor ?? null, regularPriceMinor: null, fetchedAt: null })
+      source: 'smartcart', sourcePriceMinor: item.recentPurchases[0]?.unitPriceMinor ?? null, regularPriceMinor: null, fetchedAt: null, profileRevision: item.profileRevision ?? 0 })
     setDetail(null); setDetailStack([]); setDetailsDirty(false); setActiveView('purchase')
   }
   function openAccount() { setAccountReturnView(activeView); navigate('account') }
@@ -352,7 +352,7 @@ function App() {
       </div></section> : null}
 
       {detail ? <div className="legacy-detail"><PageHeader title={detail.kind === 'purchase' ? 'รายการซื้อ' : 'รายละเอียดสินค้า'} />{detail.kind === 'purchase' ? <PurchaseDetailView key={`${account.id}:purchase:${detail.id}`} apiOrigin={apiOrigin} accountId={account.id} id={detail.id} online={isOnline} onBack={closeDetail} onDirtyChange={setDetailsDirty} onChanged={() => setDataVersion(v => v + 1)} onProduct={id => openDetail('product', id)} />
-        : <ProductDetailView key={`${account.id}:product:${detail.id}`} apiOrigin={apiOrigin} id={detail.id} online={isOnline} onBack={closeDetail} onPurchase={id => openDetail('purchase', id)} onBuy={buyAgain} />}</div> : null}
+        : <ProductDetailView key={`${account.id}:product:${detail.id}`} apiOrigin={apiOrigin} accountId={account.id} id={detail.id} online={isOnline} onBack={closeDetail} onPurchase={id => openDetail('purchase', id)} onBuy={buyAgain} onChanged={() => setDataVersion(value => value + 1)} onDirtyChange={setDetailsDirty} />}</div> : null}
 
       {activeView === 'home' && !detail ? <div className="legacy-detail"><PageHeader title="ภาพรวมรายการซื้อ" onBack={() => navigate('account')} /><HomeSummary key={account.id} apiOrigin={apiOrigin} accountId={account.id} online={isOnline} version={dataVersion} pendingCount={pendingSyncCount} onAdd={() => navigate('purchase')} onHistory={() => navigate('history')} onPurchase={id => openDetail('purchase', id)} /></div> : null}
 

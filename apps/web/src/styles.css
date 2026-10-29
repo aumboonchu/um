@@ -173,6 +173,9 @@ fieldset { min-width: 0; }
 .legacy-detail > .page-header { margin-inline: -24px; }
 .legacy-detail > .content-panel { margin-top: 0; }
 .legacy-detail .detail-panel h2 { overflow-wrap: anywhere; }
+.product-editor { display: grid; gap: 16px; min-width: 0; }
+.product-editor .purchase-fieldset { display: grid; gap: 16px; padding: 0; border: 0; background: transparent; }
+.product-editor .detail-actions { display: grid; grid-template-columns: 1fr; width: 100%; }
 .image-import-compact { display: flex; flex: 1; flex-direction: column; gap: 12px; }
 .image-import-compact .image-import-notice, .image-import-compact .image-import-field-help { color: var(--sc-color-secondary); font-size: 15px; line-height: 24px; }
 .image-import-compact .image-import-review { display: flex; flex: 1; flex-direction: column; gap: 16px; }

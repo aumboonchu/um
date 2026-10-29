@@ -105,6 +105,8 @@ export async function apiFetch(apiOrigin: string, path: string, init: RequestIni
   const destination = new URL(path, apiOrigin)
   if (destination.origin !== new URL(apiOrigin).origin) throw new Error('INVALID_API_DESTINATION')
   const headers = new Headers(init.headers)
+  // Only this client stores personalized product responses in account-scoped caches.
+  if (destination.pathname.startsWith('/api/v1/products')) headers.set('X-SmartCart-Profile', '1')
   const token = storedSession(apiOrigin)?.session.token
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(destination, { ...init, headers, credentials: 'omit', cache: 'no-store' })

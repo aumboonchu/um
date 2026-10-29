@@ -25,7 +25,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
   const checkoutConfirmed = confirmationRevision !== null && confirmationRevision === rounds.draft?.revision
   const selectedCallback = useRef(onConsumed); selectedCallback.current = onConsumed
   useEffect(() => { active.current = true; return () => { active.current = false; sequence.current += 1 } }, [])
-  useEffect(() => { if (initialProduct) { select(initialProduct); void cacheProduct(initialProduct).catch(() => {}); selectedCallback.current() } }, [initialProduct?.id])
+  useEffect(() => { if (initialProduct) { select(initialProduct); void cacheProduct(initialProduct, accountId).catch(() => {}); selectedCallback.current() } }, [initialProduct?.id, accountId])
   useEffect(() => { if (action) { reset(); setCheckout(false); setCompleted(null); setStage('image'); selectedCallback.current() } }, [action])
   useEffect(() => { title.current?.focus({ preventScroll: true }); if (stage !== 'scan' || checkout || completed) title.current?.scrollIntoView({ block: 'nearest' }) }, [stage, checkout, completed?.id, cartVisible])
   useEffect(() => { onFocusChange?.(visible && (stage !== 'scan' || checkout || Boolean(completed))); return () => onFocusChange?.(false) }, [stage, checkout, Boolean(completed), visible, onFocusChange])
@@ -46,14 +46,14 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
     busy.current = true; setWorking(true); setError(''); setMessage('กำลังค้นหาในฐานข้อมูล SmartCart…'); setUpc(normalized)
     try {
       let found: CachedProduct | null = null
-      if (!online) found = await findCachedProduct(normalized)
+      if (!online) found = await findCachedProduct(normalized, accountId)
       else {
         const response = await apiFetch(apiOrigin, `/api/v1/products/upc/${encodeURIComponent(normalized)}?databaseOnly=1`, { signal: AbortSignal.timeout(20_000) })
         if (response.ok) { const body = await response.json() as { data: CachedProduct }; if (body.data?.upc !== normalized || !body.data.id || !body.data.name) throw new Error('BAD_PRODUCT'); found = body.data }
         else if (response.status !== 404) throw new Error('LOOKUP_FAILED')
       }
       if (!active.current || token !== sequence.current) return
-      if (found) { select(found); try { await cacheProduct(found) } catch { setMessage('พบสินค้าแล้ว แต่ยังเก็บ cache ไม่ได้') } }
+      if (found) { select(found); try { await cacheProduct(found, accountId) } catch { setMessage('พบสินค้าแล้ว แต่ยังเก็บ cache ไม่ได้') } }
       else { setName(''); setBrand(''); setProduct(null); setStage('add'); setMessage(online ? '' : 'ยังไม่มีในเครื่อง เชื่อมต่ออินเทอร์เน็ตเพื่อเพิ่มสินค้า') }
     } catch { if (active.current && token === sequence.current) { setError('ยังค้นหาสินค้าไม่สำเร็จ ไม่ได้สรุปว่าไม่มีสินค้า กรุณาลองใหม่'); setMessage('') } }
     finally { busy.current = false; if (active.current) setWorking(false) }
@@ -68,7 +68,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
       const body = await response.json() as { data: CachedProduct }
       if (!body.data?.id || body.data.upc !== upc || !body.data.name) throw new Error('BAD_PRODUCT')
       if (!active.current || token !== sequence.current) return
-      select(body.data); try { await cacheProduct(body.data) } catch { /* Confirmed product remains authoritative. */ }
+      select(body.data); try { await cacheProduct(body.data, accountId) } catch { /* Confirmed product remains authoritative. */ }
     } catch { if (active.current && token === sequence.current) setError('ยังยืนยันการเพิ่มสินค้าไม่ได้ ลองค้นบาร์โค้ดเดิมอีกครั้งก่อนเพิ่มใหม่') }
     finally { busy.current = false; if (active.current) setWorking(false) }
   }
@@ -163,7 +163,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
       </form> : null}
 
       {!completed && !checkout && stage === 'image' ? <ImageImport accountId={accountId} apiOrigin={apiOrigin} canImport={canUse && online} compact scannedUpc={upc || null} onProduct={value => {
-        void cacheProduct(value).catch(() => {})
+        void cacheProduct(value, accountId).catch(() => {})
         if (upc && value.upc !== upc) { setStage('add'); setMessage('บาร์โค้ดไม่ตรงกับที่สแกน โปรดตรวจข้อมูลสินค้า'); return }
         select(value)
       }} /> : null}

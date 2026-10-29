@@ -22,6 +22,7 @@ type ProductRow = {
   upc: string | null
   name: string
   brand: string | null
+  package_size: string | null
   image_url: string | null
   purchase_count: number
   total_spent_minor: number
@@ -52,6 +53,7 @@ export type MyProductItem = {
   upc: string | null
   name: string
   brand: string | null
+  packageSize: string | null
   imageUrl: string | null
   purchaseCount: number
   totalSpentMinor: number
@@ -80,7 +82,7 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
 
   if (search) {
     const like = `%${escapeLike(search)}%`
-    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(stores.name, '') LIKE ? ESCAPE '!')")
+    conditions.push("(COALESCE(pp.name, products.name) LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(stores.name, '') LIKE ? ESCAPE '!')")
     bindings.push(like, like, like, like)
   }
   if (cursor) {
@@ -90,11 +92,12 @@ export async function listPurchaseHistory(url: URL, userId: string, env: AuthEnv
   bindings.push(limit + 1)
 
   const result = await env.DB.prepare(
-    `SELECT p.id, p.product_id, products.name AS product_name, products.sku AS product_sku, products.upc AS product_upc,
-            products.brand AS product_brand, products.image_url, stores.name AS store_name,
+    `SELECT p.id, p.product_id, COALESCE(pp.name, products.name) AS product_name, products.sku AS product_sku, products.upc AS product_upc,
+            CASE WHEN pp.product_id IS NULL THEN products.brand ELSE pp.brand END AS product_brand, products.image_url, stores.name AS store_name,
             p.unit_price_minor, p.quantity, p.total_minor, p.purchased_at, p.note
        FROM purchases p
        INNER JOIN products ON products.id = p.product_id
+       LEFT JOIN product_profiles pp ON pp.product_id = p.product_id AND pp.user_id = p.user_id
        LEFT JOIN stores ON stores.id = p.store_id AND stores.user_id = p.user_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY p.purchased_at DESC, p.id DESC
@@ -117,7 +120,7 @@ export async function listMyProducts(url: URL, userId: string, env: AuthEnv): Pr
 
   if (search) {
     const like = `%${escapeLike(search)}%`
-    conditions.push("(products.name LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(products.brand, '') LIKE ? ESCAPE '!')")
+    conditions.push("(COALESCE(pp.name, products.name) LIKE ? ESCAPE '!' OR products.upc LIKE ? ESCAPE '!' OR products.sku LIKE ? ESCAPE '!' OR COALESCE(CASE WHEN pp.product_id IS NULL THEN products.brand ELSE pp.brand END, '') LIKE ? ESCAPE '!')")
     bindings.push(like, like, like, like)
   }
   const having: string[] = []
@@ -128,14 +131,17 @@ export async function listMyProducts(url: URL, userId: string, env: AuthEnv): Pr
   bindings.push(limit + 1)
 
   const result = await env.DB.prepare(
-    `SELECT products.id, products.sku, products.upc, products.name, products.brand, products.image_url,
+    `SELECT products.id, products.sku, products.upc, COALESCE(pp.name, products.name) AS name,
+            CASE WHEN pp.product_id IS NULL THEN products.brand ELSE pp.brand END AS brand,
+            CASE WHEN pp.product_id IS NULL THEN products.package_size ELSE pp.package_size END AS package_size, products.image_url,
             COUNT(purchases.id) AS purchase_count,
             SUM(purchases.total_minor) AS total_spent_minor,
             MAX(purchases.purchased_at) AS last_purchased_at
        FROM purchases
        INNER JOIN products ON products.id = purchases.product_id
+       LEFT JOIN product_profiles pp ON pp.product_id = products.id AND pp.user_id = purchases.user_id
       WHERE ${conditions.join(' AND ')}
-      GROUP BY products.id, products.sku, products.upc, products.name, products.brand, products.image_url
+      GROUP BY products.id, products.sku, products.upc, products.name, products.brand, products.package_size, products.image_url, pp.name, pp.brand, pp.package_size
       ${having.length ? `HAVING ${having.join(' AND ')}` : ''}
       ORDER BY last_purchased_at DESC, products.id DESC
       LIMIT ?`,
@@ -208,6 +214,7 @@ function toMyProductItem(row: ProductRow): MyProductItem {
     upc: row.upc,
     name: row.name,
     brand: row.brand,
+    packageSize: row.package_size,
     imageUrl: row.image_url,
     purchaseCount: row.purchase_count,
     totalSpentMinor: row.total_spent_minor,

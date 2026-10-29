@@ -14,6 +14,7 @@ export type CachedProduct = {
   sourcePriceMinor: number | null
   regularPriceMinor: number | null
   fetchedAt: string | null
+  profileRevision?: number
 }
 
 export type PurchasePayload = {
@@ -60,16 +61,27 @@ const CLIENT_ID_KEY = 'client-id'
 
 let databasePromise: Promise<IDBDatabase> | undefined
 
-export async function cacheProduct(product: CachedProduct): Promise<void> {
+const accountProductKey = (accountId: string, value: string) => `account-product-v1:${encodeURIComponent(accountId)}:${encodeURIComponent(value)}`
+export async function cacheProduct(product: CachedProduct, accountId?: string | null): Promise<void> {
   const database = await openDatabase()
+  if (accountId) {
+    await writeValue(database, META_STORE, { key: accountProductKey(accountId, product.upc ?? `id:${product.id}`), accountId, product })
+    return
+  }
+  if (product.profileRevision) throw new Error('PERSONAL_PRODUCT_ACCOUNT_REQUIRED')
   await writeValue(database, PRODUCTS_STORE, product)
 }
 
-export async function findCachedProduct(upc: string): Promise<CachedProduct | null> {
+export async function findCachedProduct(upc: string, accountId?: string | null): Promise<CachedProduct | null> {
   const database = await openDatabase()
+  if (accountId) {
+    const personal = await readValue<{ accountId: string; product: CachedProduct }>(database, META_STORE, accountProductKey(accountId, upc))
+    if (personal?.accountId === accountId && personal.product?.upc === upc) return personal.product
+  }
   const request = database.transaction(PRODUCTS_STORE, 'readonly').objectStore(PRODUCTS_STORE).index(UPC_INDEX).get(upc)
   const product = await requestResult<CachedProduct | undefined>(request)
-  return product ?? (await readValue<CachedProduct>(database, LEGACY_PRODUCTS_STORE, upc)) ?? null
+  const cached = product ?? (await readValue<CachedProduct>(database, LEGACY_PRODUCTS_STORE, upc)) ?? null
+  return cached?.profileRevision ? null : cached
 }
 
 export async function queuePurchase(payload: PurchasePayload): Promise<PendingOperation> {
@@ -220,4 +232,3 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
     transaction.onerror = () => reject(transaction.error ?? new Error('INDEXEDDB_TRANSACTION_FAILED'))
   })
 }
-

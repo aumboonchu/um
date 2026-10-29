@@ -3,7 +3,7 @@ import { apiFetch } from './auth-client'
 export type PurchaseItem = { id: string; productId: string; productName: string; productSku: string; productUpc: string | null; productBrand: string | null; imageUrl: string | null; storeName: string | null; unitPriceMinor: number; quantity: number; totalMinor: number; purchasedAt: string; note: string | null }
 export type PurchaseDetail = PurchaseItem & { revision: number; updatedAt: string; packageSize: string | null; shoppingRoundId?: string | null }
 export type Dashboard = { month: string; start: string; end: string; totalSpentMinor: number; purchaseCount: number; productCount: number; averageMinor: number; recentPurchases: PurchaseItem[] }
-export type ProductDetail = { id: string; sku: string; upc: string | null; name: string; brand: string | null; packageSize: string | null; unit: string | null; category: string | null; imageUrl: string | null; purchaseCount: number; totalSpentMinor: number; totalQuantity: number; minimumPriceMinor: number | null; maximumPriceMinor: number | null; lastPurchasedAt: string | null; recentPurchases: PurchaseItem[] }
+export type ProductDetail = { id: string; sku: string; upc: string | null; name: string; brand: string | null; packageSize: string | null; unit: string | null; category: string | null; imageUrl: string | null; profileRevision?: number; purchaseCount: number; totalSpentMinor: number; totalQuantity: number; minimumPriceMinor: number | null; maximumPriceMinor: number | null; lastPurchasedAt: string | null; recentPurchases: PurchaseItem[] }
 export type PurchaseFields = { price: string; quantity: string; purchasedAt: string; storeName: string; note: string }
 export type EditPayload = { unitPriceMinor: number; quantity: number; purchasedAt: string; storeName: string | null; note: string | null }
 type MutationPayload = Readonly<{ operationId: string; expectedRevision: number } & Partial<EditPayload>>
@@ -24,6 +24,7 @@ export function validPurchase(v: unknown): v is PurchaseItem {
 function validDetail(v: unknown): v is PurchaseDetail { return validPurchase(v) && 'revision' in v && money(v.revision) && v.revision > 0 && 'updatedAt' in v && typeof v.updatedAt === 'string' && 'packageSize' in v && textOrNull(v.packageSize) }
 function validDashboard(v: unknown): v is Dashboard { return record(v) && typeof v.month === 'string' && /^\d{4}-\d{2}$/.test(v.month) && date(v.start) && date(v.end) && money(v.totalSpentMinor) && money(v.averageMinor) && money(v.purchaseCount) && money(v.productCount) && Array.isArray(v.recentPurchases) && v.recentPurchases.every(validPurchase) }
 function validProduct(v: unknown): v is ProductDetail { return record(v) && typeof v.id === 'string' && typeof v.sku === 'string' && typeof v.name === 'string'
+  && (v.profileRevision === undefined || money(v.profileRevision))
   && ['upc', 'brand', 'packageSize', 'unit', 'category', 'imageUrl', 'lastPurchasedAt'].every(key => textOrNull(v[key]))
   && money(v.purchaseCount) && money(v.totalSpentMinor) && typeof v.totalQuantity === 'number' && Number.isFinite(v.totalQuantity)
   && (v.minimumPriceMinor === null || money(v.minimumPriceMinor)) && (v.maximumPriceMinor === null || money(v.maximumPriceMinor)) && Array.isArray(v.recentPurchases) && v.recentPurchases.every(validPurchase) }

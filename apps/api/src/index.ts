@@ -21,6 +21,7 @@ import { SyncInputError, syncOperations } from './sync'
 import { HistoryInputError, listMyProducts, listPurchaseHistory } from './history'
 import { changePurchase, dashboard, productDetail, purchaseDetail, PurchaseManagementError } from './purchase-management'
 import { checkoutRound, listRounds, roundDetail, ShoppingRoundError } from './shopping-rounds'
+import { changeProductProfile, ProductProfileError, withProductProfile } from './product-profile'
 
 type Bindings = { Bindings: AuthEnv }
 
@@ -32,7 +33,7 @@ app.use(
     origin: (origin, context) => {
       return origin === context.env.APP_ORIGIN ? origin : ''
     },
-    allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization'],
+    allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-SmartCart-Profile'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   }),
@@ -69,7 +70,9 @@ app.get('/api/v1/health', (context) => {
 
 app.get('/api/v1/products/upc/:upc', async (context) => {
   try {
-    const product = await lookupProductByUpc(context.req.param('upc'), context.env, context.req.query('databaseOnly') === '1')
+    const canonical = await lookupProductByUpc(context.req.param('upc'), context.env, context.req.query('databaseOnly') === '1')
+    const account = await currentAccount(context.req.raw, context.env)
+    const product = account && context.req.header('X-SmartCart-Profile') === '1' ? await withProductProfile(canonical, account.id, context.env) : canonical
     return context.json({ data: product, meta: { requestId: getRequestId(context.req.raw), source: product.source } })
   } catch (error) {
     if (error instanceof ProductLookupError) {
@@ -119,7 +122,9 @@ app.post('/api/v1/products/extract-image', async (context) => {
 app.post('/api/v1/products/import-image', async (context) => {
   try {
     const result = await confirmImageProduct(context.req.raw, context.env)
-    return context.json({ data: result.product, meta: { created: result.created, requestId: getRequestId(context.req.raw) } }, result.created ? 201 : 200)
+    const account = await currentAccount(context.req.raw, context.env)
+    const product = account && context.req.header('X-SmartCart-Profile') === '1' ? await withProductProfile(result.product, account.id, context.env) : result.product
+    return context.json({ data: product, meta: { created: result.created, requestId: getRequestId(context.req.raw) } }, result.created ? 201 : 200)
   } catch (error) {
     if (error instanceof ImageProductError) return context.json({ error: { code: error.code, message: imageErrorMessage(error.code) } }, error.status)
     throw error
@@ -133,7 +138,8 @@ app.post('/api/v1/products/import-bigc', async (context) => {
     return context.json({ error: { code: 'UNTRUSTED_ORIGIN', message: 'Origin is not allowed' } }, 403)
   }
   try {
-    const product = await importBigCProductLink(context.req.raw, context.env)
+    const canonical = await importBigCProductLink(context.req.raw, context.env)
+    const product = context.req.header('X-SmartCart-Profile') === '1' ? await withProductProfile(canonical, account.id, context.env) : canonical
     return context.json({ data: product, meta: { requestId: getRequestId(context.req.raw), source: product.source } })
   } catch (error) {
     if (error instanceof BigCLinkError) return context.json({
@@ -150,7 +156,8 @@ app.post('/api/v1/products', async (context) => {
     return context.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in is required' } }, 401)
   }
   try {
-    const product = await createManualProduct(context.req.raw, context.env)
+    const canonical = await createManualProduct(context.req.raw, context.env)
+    const product = context.req.header('X-SmartCart-Profile') === '1' ? await withProductProfile(canonical, account.id, context.env) : canonical
     return context.json({ data: product, meta: { requestId: getRequestId(context.req.raw), source: product.source } }, 201)
   } catch (error) {
     if (error instanceof ManualProductInputError) {
@@ -237,7 +244,14 @@ app.get('/api/v1/dashboard', async (context) => {
 app.get('/api/v1/products/:id/detail', async (context) => {
   const account = await currentAccount(context.req.raw, context.env)
   if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
-  return context.json({ data: await productDetail(context.req.param('id'), account.id, context.env) })
+  return context.json({ data: await productDetail(context.req.param('id'), account.id, context.env, context.req.header('X-SmartCart-Profile') === '1') })
+})
+
+app.patch('/api/v1/products/:id/detail', async (context) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  if (context.req.header('Origin') !== context.env.APP_ORIGIN) return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
+  return context.json({ data: await changeProductProfile(context.req.raw, context.req.param('id'), account.id, context.env) })
 })
 
 app.on(['GET', 'PATCH', 'DELETE'], '/api/v1/purchases/:id', async (context) => {
@@ -273,6 +287,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof ProductProfileError) return context.json({ error: { code: error.code } }, error.status)
   if (error instanceof ShoppingRoundError) return context.json({ error: { code: error.code } }, error.status)
   if (error instanceof PurchaseManagementError) return context.json({ error: { code: error.code, message: error.code } }, error.status)
   const requestId = getRequestId(context.req.raw)
