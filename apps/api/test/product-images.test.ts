@@ -41,8 +41,8 @@ describe('cropped JPEG bounded validation', () => {
   it('accepts declared dimensions only when they match the JPEG SOF and SHA256', async () => {
     const valid = await parseProductImage(sample)
     expect(valid.width).toBe(32); expect(valid.height).toBe(32); expect(valid.bytes).toEqual(jpeg())
-    await expect(parseProductImage({ ...sample, width: 64 })).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID' })
-    await expect(parseProductImage({ ...sample, sha256: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID' })
+    await expect(parseProductImage({ ...sample, width: 64 })).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID', reason: 'INVALID_DIMENSIONS' })
+    await expect(parseProductImage({ ...sample, sha256: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID', reason: 'HASH_MISMATCH' })
   })
   it('rejects malformed objects, noncanonical base64, wrong types and extra keys', async () => {
     for (const value of [null, [], { ...sample, original: 'screenshot' }, { ...sample, data: `data:image/jpeg;base64,${sample.data}` },
@@ -60,7 +60,7 @@ describe('cropped JPEG bounded validation', () => {
   it('rejects common EXIF/XMP, Photoshop and comment metadata instead of retaining it', async () => {
     for (const marker of [0xe1, 0xed, 0xfe]) {
       const original = jpeg(), bytes = Uint8Array.from([...original.slice(0, 2), 0xff, marker, 0, 4, 0, 1, ...original.slice(2)])
-      await expect(parseProductImage(await image(bytes))).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID' })
+      await expect(parseProductImage(await image(bytes))).rejects.toMatchObject({ code: 'PRODUCT_IMAGE_INVALID', reason: 'JPEG_METADATA' })
     }
   })
   it('rejects excessive encoded/decoded image bytes before database writes', async () => {
@@ -239,5 +239,8 @@ describe('photo HTTP integration', () => {
     })
     expect(response.status).toBe(400)
     const raw = await response.text(); expect(raw).toContain('PRODUCT_IMAGE_INVALID'); expect(raw).not.toContain(sample.data)
+    expect(JSON.parse(raw)).toMatchObject({ error: { code: 'PRODUCT_IMAGE_INVALID', reason: 'HASH_MISMATCH' } })
+    expect(raw).not.toContain(sample.sha256)
+    expect(raw).not.toContain('ครอปใหม่')
   })
 })

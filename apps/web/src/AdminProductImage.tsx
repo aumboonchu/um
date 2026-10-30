@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { AdminError, adminMessage, adminSessionError, type AdminProduct } from './admin-client'
-import { clearAdminImage, definiteAdminImageError, readAdminImage, sendAdminImage, type AdminImageAttempt } from './admin-product-image'
+import { AdminError, adminSessionError, type AdminProduct } from './admin-client'
+import { adminImageMessage, clearAdminImage, definiteAdminImageError, readAdminImage, sendAdminImage, type AdminImageAttempt } from './admin-product-image'
 import { ProductImageCropper } from './ProductImageCropper'
 import { cropPreviewUrl, type CroppedProductImage } from './product-image-crop'
 import { validateSourceImage } from './image-import'
@@ -58,8 +58,7 @@ export function AdminProductImage({ apiOrigin, accountId, token, product, online
       if (!mounted.current) return
       if (adminSessionError(e)) callbacks.current.onSessionError(e)
       setError(e instanceof AdminError && e.code === 'ADMIN_IMAGE_STORAGE_BLOCKED' ? 'ยังเก็บคำขอรูปบนเครื่องไม่ได้ จึงยังไม่ส่งคำขอใหม่'
-        : e instanceof AdminError && ['PRODUCT_IMAGE_INVALID', 'PRODUCT_IMAGE_TOO_LARGE'].includes(e.code) ? 'รูปยังไม่ถูกต้อง กรุณาครอปใหม่'
-          : adminMessage(e))
+        : adminImageMessage(e))
       if (e instanceof AdminError && e.code === 'ADMIN_IMAGE_STORAGE_BLOCKED') setStorageBlocked(true)
       if (definiteAdminImageError(e)) {
         try { clearAdminImage(attempt); changePending(null) } catch { setStorageBlocked(true) }

@@ -5,42 +5,48 @@ export const MAX_PRODUCT_IMAGE_BYTES = 128 * 1024
 export const MAX_PRODUCT_IMAGE_BODY = 192 * 1024
 export type ProductImagePayload = { data: string; sha256: string; width: number; height: number }
 export type ProductImage = ProductImagePayload & { bytes: Uint8Array<ArrayBuffer> }
+export type ProductImageFailureReason = 'INVALID_PAYLOAD' | 'INVALID_BASE64' | 'INVALID_JPEG' | 'UNSUPPORTED_JPEG'
+  | 'INVALID_DIMENSIONS' | 'HASH_MISMATCH' | 'IMAGE_TOO_LARGE' | 'REQUEST_TOO_LARGE' | 'JPEG_METADATA'
 export class ProductImageError extends Error {
-  constructor(readonly code: 'PRODUCT_IMAGE_INVALID' | 'PRODUCT_IMAGE_TOO_LARGE', readonly status: 400 | 413) { super(code) }
+  constructor(readonly code: 'PRODUCT_IMAGE_INVALID' | 'PRODUCT_IMAGE_TOO_LARGE', readonly status: 400 | 413,
+    readonly reason: ProductImageFailureReason = code === 'PRODUCT_IMAGE_TOO_LARGE' ? 'IMAGE_TOO_LARGE' : 'INVALID_PAYLOAD') { super(code) }
 }
-const invalid = (): never => { throw new ProductImageError('PRODUCT_IMAGE_INVALID', 400) }
-const tooLarge = (): never => { throw new ProductImageError('PRODUCT_IMAGE_TOO_LARGE', 413) }
+const invalid = (reason: ProductImageFailureReason = 'INVALID_PAYLOAD'): never => { throw new ProductImageError('PRODUCT_IMAGE_INVALID', 400, reason) }
+const tooLarge = (reason: 'IMAGE_TOO_LARGE' | 'REQUEST_TOO_LARGE' = 'IMAGE_TOO_LARGE'): never => { throw new ProductImageError('PRODUCT_IMAGE_TOO_LARGE', 413, reason) }
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** Validate bounded JPEG framing/dimensions, not AI semantics. User confirms the product-only crop. */
 function jpegDimensions(bytes: Uint8Array): { width: number; height: number } {
-  if (bytes.length < 30 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) return invalid()
+  if (bytes.length < 30 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) return invalid('INVALID_JPEG')
   let position = 2, width = 0, height = 0, components = 0, quantization = false, huffman = false, scans = 0, entropy = 0
   while (position < bytes.length) {
-    if (bytes[position++] !== 0xff) return invalid()
+    if (bytes[position++] !== 0xff) return invalid('INVALID_JPEG')
     while (bytes[position] === 0xff) position += 1
     const marker = bytes[position++]
     if (marker === 0xd9) {
-      if (position !== bytes.length || !width || !height || !quantization || !huffman || !scans || !entropy) return invalid()
+      if (position !== bytes.length || !width || !height || !quantization || !huffman || !scans || !entropy) return invalid('INVALID_JPEG')
       return { width, height }
     }
-    if (marker === undefined || marker === 0 || marker === 0xd8 || marker === 1 || marker >= 0xd0 && marker <= 0xd7 || position + 2 > bytes.length) return invalid()
+    if (marker === undefined || marker === 0 || marker === 0xd8 || marker === 1 || marker >= 0xd0 && marker <= 0xd7 || position + 2 > bytes.length) return invalid('INVALID_JPEG')
     const length = bytes[position] * 256 + bytes[position + 1]
-    if (length < 2 || position + length > bytes.length) return invalid()
-    // Reject EXIF/XMP, Photoshop metadata and arbitrary comments. Canvas re-encoding does not need them.
-    if (marker === 0xe1 || marker === 0xed || marker === 0xfe) return invalid()
+    if (length < 2 || position + length > bytes.length) return invalid('INVALID_JPEG')
+    // New canvas crops strip these before hashing. Reject unsanitized/legacy payloads here.
+    if (marker === 0xe1 || marker === 0xed || marker === 0xfe) return invalid('JPEG_METADATA')
     if (marker === 0xdb) quantization = true
     if (marker === 0xc4) huffman = true
     if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-      if (width || ![0xc0, 0xc2].includes(marker) || length < 8 || bytes[position + 2] !== 8) return invalid()
+      if (width || length < 8) return invalid('INVALID_JPEG')
+      if (![0xc0, 0xc2].includes(marker) || bytes[position + 2] !== 8) return invalid('UNSUPPORTED_JPEG')
       height = bytes[position + 3] * 256 + bytes[position + 4]
       width = bytes[position + 5] * 256 + bytes[position + 6]
       components = bytes[position + 7]
-      if (![1, 3].includes(components) || length !== 8 + components * 3 || width < 16 || height < 16 || width > 640 || height > 640) return invalid()
+      if (![1, 3].includes(components)) return invalid('UNSUPPORTED_JPEG')
+      if (length !== 8 + components * 3) return invalid('INVALID_JPEG')
+      if (width < 16 || height < 16 || width > 640 || height > 640) return invalid('INVALID_DIMENSIONS')
     }
     if (marker !== 0xda) { position += length; continue }
     const scanComponents = bytes[position + 2]
-    if (!width || !quantization || !huffman || scanComponents < 1 || scanComponents > components || length !== 6 + scanComponents * 2) return invalid()
+    if (!width || !quantization || !huffman || scanComponents < 1 || scanComponents > components || length !== 6 + scanComponents * 2) return invalid('INVALID_JPEG')
     scans += 1
     position += length
     while (position < bytes.length) {
@@ -53,7 +59,7 @@ function jpegDimensions(bytes: Uint8Array): { width: number; height: number } {
       break
     }
   }
-  return invalid()
+  return invalid('INVALID_JPEG')
 }
 
 export async function parseProductImage(value: unknown): Promise<ProductImage> {
@@ -61,15 +67,15 @@ export async function parseProductImage(value: unknown): Promise<ProductImage> {
     || typeof value.data !== 'string' || typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(value.sha256)
     || !Number.isSafeInteger(value.width) || !Number.isSafeInteger(value.height)) return invalid()
   if (value.data.length > Math.ceil(MAX_PRODUCT_IMAGE_BYTES / 3) * 4) return tooLarge()
-  if (!value.data.length || value.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.data)) return invalid()
+  if (!value.data.length || value.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.data)) return invalid('INVALID_BASE64')
   let binary: string
-  try { binary = atob(value.data) } catch { return invalid() }
-  if (btoa(binary) !== value.data) return invalid()
+  try { binary = atob(value.data) } catch { return invalid('INVALID_BASE64') }
+  if (btoa(binary) !== value.data) return invalid('INVALID_BASE64')
   if (binary.length > MAX_PRODUCT_IMAGE_BYTES) return tooLarge()
   const bytes = Uint8Array.from(binary, c => c.charCodeAt(0)), dimensions = jpegDimensions(bytes)
-  if (dimensions.width !== value.width || dimensions.height !== value.height) return invalid()
+  if (dimensions.width !== value.width || dimensions.height !== value.height) return invalid('INVALID_DIMENSIONS')
   const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
-  if (sha256 !== value.sha256.toLowerCase()) return invalid()
+  if (sha256 !== value.sha256.toLowerCase()) return invalid('HASH_MISMATCH')
   return { data: value.data, sha256, ...dimensions, bytes }
 }
 
@@ -92,11 +98,11 @@ export async function readProductImageAsset(id: string, sha256: string, env: Aut
 
 export async function readProductImageBody(request: Request): Promise<unknown> {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('Content-Type') ?? '') || !request.body) return invalid()
-  if (Number(request.headers.get('Content-Length')) > MAX_PRODUCT_IMAGE_BODY) return tooLarge()
+  if (Number(request.headers.get('Content-Length')) > MAX_PRODUCT_IMAGE_BODY) return tooLarge('REQUEST_TOO_LARGE')
   const reader = request.body.getReader(), chunks: Uint8Array[] = []; let size = 0
   try { while (true) {
     const { done, value } = await reader.read(); if (done) break
-    size += value.byteLength; if (size > MAX_PRODUCT_IMAGE_BODY) { await reader.cancel(); return tooLarge() }
+    size += value.byteLength; if (size > MAX_PRODUCT_IMAGE_BODY) { await reader.cancel(); return tooLarge('REQUEST_TOO_LARGE') }
     chunks.push(value)
   } } finally { reader.releaseLock() }
   const bytes = new Uint8Array(size); let offset = 0

@@ -15,6 +15,38 @@ beforeEach(() => {
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 describe('admin request and mutation safeguards', () => {
+  it.each(['INVALID_JPEG', 'HASH_MISMATCH', 'JPEG_METADATA', 'IMAGE_TOO_LARGE'])('retains only safe image rejection diagnostics: %s', async reason => {
+    const { adminRequest, adminMessage } = await import('../src/admin-client')
+    const code = reason === 'IMAGE_TOO_LARGE' ? 'PRODUCT_IMAGE_TOO_LARGE' : 'PRODUCT_IMAGE_INVALID'
+    const status = reason === 'IMAGE_TOO_LARGE' ? 413 : 400
+    transport.send.mockResolvedValue(new Response(JSON.stringify({ error: { code, reason, message: 'RAW IMAGE secret /9j/should-not-render' } }), { status }))
+    const error = await adminRequest('', '/products/unit-product/image', token, { method: 'PATCH', body: '{}' }).catch(e => e)
+    expect(error).toMatchObject({ code, status, reason })
+    expect(adminMessage(error)).toContain(`${code} / ${reason}`)
+    expect(adminMessage(error)).not.toContain('secret')
+    expect(adminMessage(error)).not.toContain('/9j/')
+  })
+  it.each(['UNKNOWN_NEW_REASON', { original: 'secret' }, 'INVALID_JPEG\n/9j/secret', null])('treats a supplied unrecognized image reason as an unconfirmed response: %j', async reason => {
+    const { adminRequest, adminMessage, AdminError } = await import('../src/admin-client')
+    transport.send.mockResolvedValue(new Response(JSON.stringify({ error: { code: 'PRODUCT_IMAGE_INVALID', reason, message: 'secret' } }), { status: 400 }))
+    const error = await adminRequest('', '/products/unit-product/image', token, { method: 'PATCH', body: '{}' }).catch(e => e)
+    if (!(error instanceof AdminError)) throw new Error('Expected a sanitized admin error')
+    expect(error).toMatchObject({ code: 'ADMIN_RESPONSE_INVALID', status: 400 })
+    expect(error.reason).toBeUndefined()
+    expect(adminMessage(error)).not.toContain('secret')
+  })
+  it('keeps legacy image errors without a reason compatible, and ignores unsafe error codes', async () => {
+    const { adminRequest, adminMessage, AdminError } = await import('../src/admin-client')
+    transport.send.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 'PRODUCT_IMAGE_INVALID' } }), { status: 400 }))
+    const old = await adminRequest('', '/products/unit-product/image').catch(e => e)
+    expect(old).toMatchObject({ code: 'PRODUCT_IMAGE_INVALID', status: 400 })
+    expect(adminMessage(old)).toContain('ระบบตรวจไฟล์รูปไม่ผ่าน')
+    transport.send.mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: 'secret /9j/bytes', reason: 'secret' } }), { status: 400 }))
+    const malformed = await adminRequest('', '/products/unit-product/image').catch(e => e)
+    if (!(malformed instanceof AdminError)) throw new Error('Expected a sanitized admin error')
+    expect(malformed.code).toBe('ADMIN_REQUEST_FAILED')
+    expect(malformed.reason).toBeUndefined()
+  })
   it('times out a stalled request after 20 seconds and aborts its network signal', async () => {
     vi.useFakeTimers(); transport.send.mockImplementation(() => new Promise(() => {}))
     const { adminRequest } = await import('../src/admin-client')

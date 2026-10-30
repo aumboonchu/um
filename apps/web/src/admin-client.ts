@@ -1,4 +1,5 @@
 import { apiFetch } from './auth-client'
+import { productImageFailureMessage, productImageFailureReason, type ProductImageFailureReason } from './product-image-errors'
 
 export type AdminSession = { token: string; expiresAt: string; mustChangePassword: boolean }
 export type AdminProduct = {
@@ -12,7 +13,8 @@ export type AdminEdit = { productId: string; payload: {
   brand: string | null; packageSize: string | null; unit: string | null; category: string | null;
 } }
 export class AdminError extends Error {
-  constructor(readonly code: string, readonly status = 0) { super(code) }
+  readonly reason: ProductImageFailureReason | undefined
+  constructor(readonly code: string, readonly status = 0, reason?: unknown) { super(code); this.reason = productImageFailureReason(reason) }
 }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -37,7 +39,14 @@ export async function adminRequest(apiOrigin: string, path: string, token: strin
         const response = await apiFetch(apiOrigin, `/api/v1/admin${path}`, { ...init, headers, signal: controller.signal })
         let body: unknown
         try { body = await response.json() } catch { throw new AdminError('ADMIN_RESPONSE_INVALID', response.status) }
-        if (!response.ok) throw new AdminError(record(body) && record(body.error) && typeof body.error.code === 'string' ? body.error.code : 'ADMIN_REQUEST_FAILED', response.status)
+        if (!response.ok) {
+          const error = record(body) && record(body.error) ? body.error : null
+          const code = error && typeof error.code === 'string' && /^[A-Z_]{1,64}$/.test(error.code) ? error.code : 'ADMIN_REQUEST_FAILED'
+          const reason = productImageFailureReason(error?.reason)
+          if (['PRODUCT_IMAGE_INVALID', 'PRODUCT_IMAGE_TOO_LARGE'].includes(code) && error && 'reason' in error && !reason)
+            throw new AdminError('ADMIN_RESPONSE_INVALID', response.status)
+          throw new AdminError(code, response.status, reason)
+        }
         if (!record(body) || !('data' in body)) throw new AdminError('ADMIN_RESPONSE_INVALID', response.status)
         return body.data
       })(),
@@ -122,6 +131,7 @@ export async function sendAdminEdit(apiOrigin: string, token: string, accountId:
 export function adminMessage(error: unknown): string {
   const code = error instanceof AdminError ? error.code : ''
   switch (code) {
+    case 'PRODUCT_IMAGE_INVALID': case 'PRODUCT_IMAGE_TOO_LARGE': return productImageFailureMessage(code, error instanceof AdminError ? error.reason : undefined)
     case 'ADMIN_LOGIN_FAILED': return 'รหัสผ่านไม่ถูกต้อง'
     case 'ADMIN_FORBIDDEN': return 'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ'
     case 'ADMIN_SESSION_REQUIRED': case 'ADMIN_ACCOUNT_MISMATCH': case 'UNAUTHENTICATED': return 'กรุณาเข้าสู่ระบบผู้ดูแลอีกครั้ง'

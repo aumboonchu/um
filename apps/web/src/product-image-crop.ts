@@ -1,3 +1,5 @@
+import { stripJpegMetadata } from './jpeg-metadata'
+
 export type CropBounds = { x: number; y: number; width: number; height: number }
 export type CroppedProductImage = Readonly<{ data: string; sha256: string; width: number; height: number }>
 export const MAX_PRODUCT_IMAGE_BYTES = 128 * 1024
@@ -65,7 +67,7 @@ export async function cropProductImage(source: Blob, bounds: CropBounds, signal?
     const canvas = document.createElement('canvas'), context = canvas.getContext('2d')
     if (!context) throw new Error('เบราว์เซอร์นี้ครอปรูปไม่ได้ กรุณาลอง Chrome หรือ Safari เวอร์ชันใหม่')
     let blob: Blob | null = null
-    // JPEG re-encoding copies only selected pixels; screenshot metadata is not retained.
+    // Copy selected pixels; normalize browser-added metadata before hashing/freezing the NEW crop.
     for (const quality of [.88, .76, .62, .48]) {
       check(signal)
       const width = Math.round(sw * scale), height = Math.round(sh * scale)
@@ -79,7 +81,7 @@ export async function cropProductImage(source: Blob, bounds: CropBounds, signal?
       scale *= .8
     }
     if (!blob || blob.type !== 'image/jpeg' || !blob.size || blob.size > MAX_PRODUCT_IMAGE_BYTES) throw new Error('รูปที่ครอปยังใหญ่เกินไป กรุณาลดขนาดกรอบ')
-    const bytes = new Uint8Array(await blob.arrayBuffer()); check(signal)
+    const bytes = stripJpegMetadata(new Uint8Array(await blob.arrayBuffer())); check(signal)
     if (bytes[0] !== 255 || bytes[1] !== 216 || bytes[2] !== 255) throw new Error('เตรียมรูป JPEG ไม่สำเร็จ')
     const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
     check(signal)

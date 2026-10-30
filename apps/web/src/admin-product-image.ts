@@ -1,4 +1,4 @@
-import { AdminError, adminRequest } from './admin-client'
+import { AdminError, adminMessage, adminRequest } from './admin-client'
 import { isCroppedProductImage, type CroppedProductImage } from './product-image-crop'
 
 export type AdminImageAttempt = { version: 1; productId: string; payload: {
@@ -24,7 +24,8 @@ export function readAdminImage(accountId: string): AdminImageAttempt | null {
 }
 export function persistAdminImage(attempt: AdminImageAttempt): void {
   const accountId = attempt.payload.accountId, raw = JSON.stringify(attempt)
-  if (raw.length > 190_000 || !isCroppedProductImage(attempt.payload.productImage)) throw new AdminError('PRODUCT_IMAGE_INVALID', 400)
+  if (raw.length > 190_000) throw new AdminError('PRODUCT_IMAGE_TOO_LARGE', 413, 'REQUEST_TOO_LARGE')
+  if (!isCroppedProductImage(attempt.payload.productImage)) throw new AdminError('PRODUCT_IMAGE_INVALID', 400, 'INVALID_PAYLOAD')
   const previous = readAdminImage(accountId)
   if (previous && JSON.stringify(previous) !== raw) throw storageError()
   try { localStorage.setItem(key(accountId), raw); if (localStorage.getItem(key(accountId)) !== raw) throw storageError() }
@@ -47,6 +48,15 @@ export async function sendAdminImage(apiOrigin: string, token: string, attempt: 
     || !data.imageUrl.endsWith(`/${attempt.payload.productImage.sha256}.jpg`)) throw new AdminError('ADMIN_RESPONSE_INVALID')
 }
 export function definiteAdminImageError(e: unknown): boolean {
-  return e instanceof AdminError && [400, 404, 409, 413].includes(e.status)
-    && ['PRODUCT_IMAGE_INVALID', 'PRODUCT_IMAGE_TOO_LARGE', 'PRODUCT_NOT_FOUND', 'PRODUCT_CONFLICT'].includes(e.code)
+  return e instanceof AdminError && (
+    e.code === 'PRODUCT_IMAGE_INVALID' && e.status === 400
+    || e.code === 'PRODUCT_IMAGE_TOO_LARGE' && e.status === 413
+    || e.code === 'PRODUCT_NOT_FOUND' && e.status === 404
+    || e.code === 'PRODUCT_CONFLICT' && e.status === 409
+  )
+}
+export function adminImageMessage(error: unknown): string {
+  if (error instanceof AdminError && ['PRODUCT_IMAGE_INVALID', 'PRODUCT_IMAGE_TOO_LARGE'].includes(error.code) && !definiteAdminImageError(error))
+    return `ยังยืนยันผลการบันทึกรูปไม่ได้ กรุณาตรวจสอบด้วยรหัสเดิม (รหัส: ${error.code})`
+  return adminMessage(error)
 }

@@ -1,5 +1,6 @@
 import type { CachedProduct } from './offline'
 import { isCroppedProductImage, validCropBounds, type CropBounds, type CroppedProductImage } from './product-image-crop'
+import { productImageFailureMessage, productImageFailureReason, type ProductImageFailureReason } from './product-image-errors'
 
 export const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_UPLOAD_IMAGE_BYTES = 3 * 1024 * 1024
@@ -43,7 +44,7 @@ type PendingStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key'
 type StoredImageAttempt = { version: 1; accountId: string; createdAt: string; payload: ImageImportPayload }
 export type ConfirmedImageProduct = CachedProduct & { sku: string }
 type RequestOptions = { signal?: AbortSignal; timeoutMs?: number }
-type ErrorResult = { status: 'error'; message: string; code?: string; retryable: boolean }
+type ErrorResult = { status: 'error'; message: string; code?: string; reason?: ProductImageFailureReason; retryable: boolean }
 type CancelledResult = { status: 'cancelled' }
 export type ExtractionResult =
   | { status: 'success'; draft: ImageDraft; imageSha256: string; warnings: string[] }
@@ -378,7 +379,12 @@ export async function requestImageConfirmation(
       if (response.status === 401 || code === 'UNAUTHENTICATED') return { status: 'uncertain', code: code ?? 'UNAUTHENTICATED', message: 'กรุณาเข้าสู่ระบบด้วยบัญชีเดิม แล้วตรวจสอบด้วยรหัสรายการเดิม สินค้าอาจถูกบันทึกแล้ว' }
       if (response.status === 403 || code === 'UNTRUSTED_ORIGIN') return { status: 'uncertain', code: code ?? 'UNTRUSTED_ORIGIN', message: 'คำขอนี้ไม่ได้รับอนุญาต โปรดเปิด SmartCart จากหน้าเว็บหลัก แล้วตรวจสอบด้วยรหัสรายการเดิม' }
       if (code === 'INVALID_IMAGE_PRODUCT' && (response.status === 400 || response.status === 422)) return { status: 'error', code, ...imageErrors.INVALID_IMAGE_PRODUCT }
-      if ((code === 'PRODUCT_IMAGE_INVALID' && response.status === 400) || (code === 'PRODUCT_IMAGE_TOO_LARGE' && response.status === 413)) return { status: 'error', code, message: 'รูปสินค้าที่ครอปยังไม่ถูกต้อง กรุณาครอปใหม่ก่อนบันทึก', retryable: false }
+      if ((code === 'PRODUCT_IMAGE_INVALID' && response.status === 400) || (code === 'PRODUCT_IMAGE_TOO_LARGE' && response.status === 413)) {
+        const error = record(payload) && record(payload.error) ? payload.error : null
+        const reason = productImageFailureReason(error?.reason)
+        if (error && 'reason' in error && !reason) return { status: 'uncertain', code: 'INVALID_RESPONSE', message: 'ระบบตอบกลับการตรวจรูปไม่สมบูรณ์ ยังยืนยันผลไม่ได้ กรุณาตรวจด้วยรหัสรายการเดิม' }
+        return { status: 'error', code, ...(reason ? { reason } : {}), message: productImageFailureMessage(code, reason), retryable: false }
+      }
       return { status: 'uncertain', code, message: code === 'IMAGE_IMPORT_CONFLICT'
         ? 'รหัสรายการนี้มีข้อมูลที่ไม่ตรงกัน จึงยังยืนยันผลไม่ได้ ห้ามส่งเป็นสินค้าใหม่ กรุณาตรวจสอบรายการเดิม'
         : 'ระบบตอบกลับไม่สมบูรณ์ สินค้าอาจถูกบันทึกแล้ว กรุณาตรวจสอบด้วยข้อมูลและรหัสรายการเดิม' }

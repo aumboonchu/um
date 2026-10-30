@@ -351,3 +351,28 @@ describe('initial screenshot import UI', () => {
     expect(html).not.toContain('type="checkbox"')
   })
 })
+
+describe('specific image save failure diagnostics', () => {
+  it.each([
+    ['PRODUCT_IMAGE_INVALID', 400, 'INVALID_JPEG'],
+    ['PRODUCT_IMAGE_INVALID', 400, 'JPEG_METADATA'],
+    ['PRODUCT_IMAGE_INVALID', 400, 'HASH_MISMATCH'],
+    ['PRODUCT_IMAGE_TOO_LARGE', 413, 'IMAGE_TOO_LARGE'],
+  ] as const)('returns safe editable validation feedback for %s / %s / %s', async (code, status, reason) => {
+    const result = await requestImageConfirmation(createImageImportAttempt(fields, hash, operationId), async () => json({ error: { code, reason, message: 'secret /9j/raw image' } }, status))
+    expect(result).toMatchObject({ status: 'error', code, reason, retryable: false })
+    expect('message' in result && result.message).toContain(`${code} / ${reason}`)
+    expect('message' in result && result.message).not.toContain('secret')
+    expect('message' in result && result.message).not.toContain('ครอปใหม่')
+  })
+  it.each(['UNKNOWN_REASON', null, { bytes: '/9j/private' }])('does not accept an unknown validation reason as a definite rollback: %j', async reason => {
+    const result = await requestImageConfirmation(createImageImportAttempt(fields, hash, operationId), async () => json({ error: { code: 'PRODUCT_IMAGE_INVALID', reason, message: 'secret' } }, 400))
+    expect(result).toMatchObject({ status: 'uncertain', code: 'INVALID_RESPONSE' })
+    expect('message' in result && result.message).not.toContain('secret')
+  })
+  it('keeps a legacy validation reply without a reason editable, but an unexpected status uncertain', async () => {
+    const attempt = createImageImportAttempt(fields, hash, operationId)
+    expect(await requestImageConfirmation(attempt, async () => json({ error: { code: 'PRODUCT_IMAGE_INVALID' } }, 400))).toMatchObject({ status: 'error', code: 'PRODUCT_IMAGE_INVALID' })
+    expect(await requestImageConfirmation(attempt, async () => json({ error: { code: 'PRODUCT_IMAGE_TOO_LARGE', reason: 'IMAGE_TOO_LARGE' } }, 500))).toMatchObject({ status: 'uncertain', code: 'PRODUCT_IMAGE_TOO_LARGE' })
+  })
+})

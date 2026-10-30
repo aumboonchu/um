@@ -50,6 +50,16 @@ describe('product-only crop geometry and JPEG encoding', () => {
     const result = await cropProductImage(new Blob(['source'], { type: 'image/jpeg' }), { x: 0, y: 0, width: 1, height: 1 })
     expect(canvas.toBlob).toHaveBeenCalledTimes(2); expect([result.width, result.height]).toEqual([512, 384]); expect(close).toHaveBeenCalledTimes(1)
   })
+  it('removes browser-added EXIF/comment metadata before hashing and persisting a new crop', async () => {
+    const metadata = new TextEncoder().encode('Exif\0GPS original-private-data')
+    const withMetadata = Uint8Array.from([255, 216, 255, 225, 0, metadata.length + 2, ...metadata, ...bytes.slice(2)])
+    canvasFixture([new Blob([withMetadata], { type: 'image/jpeg' })])
+    const result = await cropProductImage(new Blob(['source'], { type: 'image/jpeg' }), { x: 0, y: 0, width: .5, height: .5 })
+    expect(result.data).toBe(btoa(String.fromCharCode(...bytes)))
+    const expected = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
+    expect(result.sha256).toBe(expected)
+    expect(atob(result.data)).not.toContain('original-private-data')
+  })
   it('refuses too-small crops and releases decoded image resources on failure', async () => {
     const { close } = canvasFixture()
     await expect(cropProductImage(new Blob(['source'], { type: 'image/jpeg' }), { x: 0, y: 0, width: .001, height: .001 })).rejects.toThrow('เล็กเกินไป')

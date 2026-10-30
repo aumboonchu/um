@@ -336,7 +336,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
-  if (error instanceof ProductImageError) return context.json({ error: { code: error.code, message: imageErrorMessage(error.code) } }, error.status)
+  if (error instanceof ProductImageError) return context.json({ error: { code: error.code, reason: error.reason, message: imageErrorMessage(error.code) } }, error.status)
   if (error instanceof AdminError) {
     context.header('Cache-Control', 'no-store')
     if (error.status === 429) context.header('Retry-After', '900')
@@ -376,8 +376,8 @@ export default app
 
 function imageErrorMessage(code: string): string {
   switch (code) {
-    case 'PRODUCT_IMAGE_INVALID': return 'รูปสินค้ายังไม่ถูกต้อง กรุณาครอปและยืนยันรูปใหม่'
-    case 'PRODUCT_IMAGE_TOO_LARGE': return 'รูปสินค้าที่ครอปใหญ่เกินไป กรุณาครอปใหม่ให้เล็กลง'
+    case 'PRODUCT_IMAGE_INVALID': return 'ยังบันทึกรูปไม่ได้ ระบบตรวจไฟล์รูปไม่ผ่าน'
+    case 'PRODUCT_IMAGE_TOO_LARGE': return 'ยังบันทึกรูปไม่ได้ ไฟล์รูปใหญ่เกินขนาดที่ระบบรับได้'
     case 'UNAUTHENTICATED': return 'กรุณาเข้าสู่ระบบก่อนอ่านภาพหรือเพิ่มสินค้า'
     case 'UNTRUSTED_ORIGIN': return 'กรุณาใช้หน้า SmartCart ที่ได้รับอนุญาต'
     case 'IMAGE_TOO_LARGE': return 'ภาพใหญ่เกินไป กรุณาใช้ภาพขนาดเล็กลง'
