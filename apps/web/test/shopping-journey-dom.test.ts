@@ -6,9 +6,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { RoundPayload, RoundReport } from '../src/shopping-rounds'
 
 const transport = vi.hoisted(() => ({ send: vi.fn() }))
+const cropTransport = vi.hoisted(() => ({ source: null as Blob | null, image: { data: '/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==', sha256: 'cd'.repeat(32), width: 320, height: 480 } }))
 vi.mock('../src/auth-client', async importActual => ({ ...await importActual<typeof import('../src/auth-client')>(), apiFetch: transport.send }))
 vi.mock('../src/BarcodeScanner', () => ({ default: ({ disabled, onDetected }: { disabled: boolean; onDetected: (v: string) => void }) => createElement('button', { disabled, onClick: () => onDetected('8851959129012') }, 'กล้องทดสอบสแกนสินค้า') }))
 vi.mock('../src/image-import', async importActual => ({ ...await importActual<typeof import('../src/image-import')>(), prepareImageUpload: async () => new Blob(['prepared'], { type: 'image/jpeg' }), imageFingerprint: async () => 'ab'.repeat(32) }))
+vi.mock('../src/ProductImageCropper', () => ({ ProductImageCropper: ({ source, onConfirm, disabled }: { source: Blob; onConfirm: (image: typeof cropTransport.image) => void; disabled: boolean }) => {
+  cropTransport.source = source
+  return createElement('button', { type: 'button', disabled, onClick: () => onConfirm(cropTransport.image) }, 'ใช้รูปที่ครอป')
+} }))
 let reports: RoundReport[], failCheckout: boolean, added: boolean, checkoutBodies: string[], currentUser: string, imageUpc: string | null, avatarUrl: string | null
 const known = { id: 'dom-milk', sku: 'UPC-MILK', name: 'นมทดสอบ', upc: '8851959129012', brand: null, packageSize: '1 แพ็ก', imageUrl: null, source: 'smartcart', sourcePriceMinor: 2500, regularPriceMinor: null, fetchedAt: null }
 const unknown = { ...known, id: 'dom-oreo', sku: 'UPC-OREO', upc: '3017620422003', name: 'OREO เพิ่มใหม่', packageSize: null, sourcePriceMinor: null }
@@ -28,7 +33,7 @@ beforeEach(() => {
     if (path.startsWith('/api/v1/products/upc/3017620422003')) return added ? json({ data: unknown }) : json({ error: { code: 'PRODUCT_NOT_FOUND' } }, 404)
     if (path === '/api/v1/products') { added = true; return json({ data: unknown }, 201) }
     if (path === '/api/v1/products/extract-image') return json({ data: { draft: { name: unknown.name, brand: 'OREO', packageSize: '24.6 g x 12', sourcePriceMinor: 4500, upc: imageUpc, retailerCode: '197584' }, imageSha256: 'ab'.repeat(32), warnings: [] } })
-    if (path === '/api/v1/products/import-image') { added = true; return json({ data: { ...unknown, sourcePriceMinor: 4500 } }, 201) }
+    if (path === '/api/v1/products/import-image') { added = true; const withPhoto = Boolean(JSON.parse(String(init?.body)).productImage); return json({ data: { ...unknown, sourcePriceMinor: 4500, imageUrl: withPhoto ? 'https://example.test/cropped-product.jpg' : null } }, 201) }
     if (path.startsWith('/api/v1/purchases?')) return json({ data: { items: [], nextCursor: null } })
     if (path.startsWith('/api/v1/products/mine?')) return json({ data: { items: [], nextCursor: null } })
     if (path === '/api/v1/rounds/checkout') {
@@ -218,6 +223,7 @@ describe('mobile scan-first journey DOM integration', () => {
     fireEvent.change(screen.getByLabelText('เลือกรูปสินค้า'), { target: { files: [new File(['jpeg'], 'makro.jpg', { type: 'image/jpeg' })] } })
     fireEvent.click(await screen.findByRole('button', { name: 'อ่านข้อมูลจากภาพ' }))
     const upcInput = await screen.findByLabelText('UPC / EAN (ไม่บังคับ)'); expect((upcInput as HTMLInputElement).value).toBe('3017620422003')
+    fireEvent.click(screen.getByRole('button', { name: 'ไม่ใส่รูปสินค้า' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' }))
     fireEvent.click(screen.getByRole('button', { name: 'บันทึกและใส่ราคา' })); await screen.findByRole('heading', { name: 'เพิ่มเข้ารอบ' })
     const call = transport.send.mock.calls.find(([, path]) => path === '/api/v1/products/import-image')
@@ -250,6 +256,7 @@ describe('mobile scan-first journey DOM integration', () => {
     expect((screen.getByLabelText('รหัสร้าน (ไม่ใช่บาร์โค้ด)') as HTMLInputElement).value).toBe('13627')
     expect((screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }) as HTMLButtonElement).disabled).toBe(true)
     expect(transport.send.mock.calls.filter(([, path]) => path === '/api/v1/products/import-image')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'ไม่ใส่รูปสินค้า' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' }))
     fireEvent.click(screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }))
     await screen.findByRole('heading', { name: 'เพิ่มเข้ารอบ' })
@@ -263,6 +270,27 @@ describe('mobile scan-first journey DOM integration', () => {
     expect((await readLocalRounds('dom-user')).draft?.lines[0]).toMatchObject({ product: { id: bottle.id, upc: null }, quantity: 2, unitPriceMinor: 600 })
     expect(reports).toHaveLength(0)
     expect(checkoutBodies).toHaveLength(0)
+  })
+  it('reads the original screenshot for OCR but saves only the explicitly confirmed product crop and displays its returned image', async () => {
+    await app(); fireEvent.click(screen.getByRole('button', { name: 'เพิ่มจากรูป' }))
+    fireEvent.change(screen.getByLabelText('เลือกรูปสินค้า'), { target: { files: [new File(['full screenshot with account and prices'], 'screen.jpg', { type: 'image/jpeg' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'อ่านข้อมูลจากภาพ' }))
+    await screen.findByLabelText('UPC / EAN (ไม่บังคับ)')
+    const extraction = transport.send.mock.calls.find(([, path]) => path === '/api/v1/products/extract-image')
+    expect(extraction?.[2]?.body).toBe(cropTransport.source)
+    expect(extraction?.[2]?.body).toBeInstanceOf(Blob)
+    fireEvent.click(screen.getByRole('button', { name: 'ใช้รูปที่ครอป' }))
+    expect(screen.getByAltText('รูปสินค้าที่ครอปแล้ว').getAttribute('src')).toBe(`data:image/jpeg;base64,${cropTransport.image.data}`)
+    expect((screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox', { name: 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' }))
+    fireEvent.click(screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }))
+    await screen.findByRole('heading', { name: 'เพิ่มเข้ารอบ' })
+    const confirmation = transport.send.mock.calls.find(([, path]) => path === '/api/v1/products/import-image')
+    const payload = JSON.parse(String(confirmation?.[2]?.body))
+    expect(payload).toMatchObject({ productImage: cropTransport.image, imageSha256: 'ab'.repeat(32), retailerCode: '197584', sourcePriceMinor: 4500 })
+    expect(String(confirmation?.[2]?.body)).not.toContain('full screenshot with account and prices')
+    expect(document.querySelector('.product-photo')?.getAttribute('src')).toBe('https://example.test/cropped-product.jpg')
+    expect(reports).toHaveLength(0); expect(checkoutBodies).toHaveLength(0)
   })
   it('requires reviewing a changed cart revision before checkout confirmation becomes enabled again', async () => {
     const { ShoppingJourney } = await import('../src/ShoppingJourney')

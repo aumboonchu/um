@@ -1,4 +1,5 @@
 import type { CachedProduct } from './offline'
+import { isCroppedProductImage, validCropBounds, type CropBounds, type CroppedProductImage } from './product-image-crop'
 
 export const MAX_SOURCE_IMAGE_BYTES = 10 * 1024 * 1024
 export const MAX_UPLOAD_IMAGE_BYTES = 3 * 1024 * 1024
@@ -12,6 +13,7 @@ export type ImageDraft = {
   sourcePriceMinor: number | null
   upc: string | null
   retailerCode: string | null
+  productImageBounds?: CropBounds
 }
 
 export type ImageProductFields = {
@@ -33,6 +35,7 @@ export type ImageImportPayload = Readonly<{
   upc: string | null
   retailerCode: string | null
   imageSha256: string | null
+  productImage?: CroppedProductImage
 }>
 
 export type ImageImportAttempt = Readonly<{ payload: ImageImportPayload }>
@@ -163,16 +166,18 @@ export function validateImageProductFields(fields: ImageProductFields): string |
   return null
 }
 
-export function createImageImportAttempt(fields: ImageProductFields, imageSha256: string | null, operationId: string = crypto.randomUUID()): ImageImportAttempt {
+export function createImageImportAttempt(fields: ImageProductFields, imageSha256: string | null, operationId: string = crypto.randomUUID(), productImage?: CroppedProductImage): ImageImportAttempt {
   const validation = validateImageProductFields(fields)
   if (validation) throw new Error(validation)
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) throw new Error('ไม่สามารถสร้างรหัสรายการได้ กรุณาโหลดหน้าใหม่')
   if (imageSha256 !== null && !/^[0-9a-f]{64}$/i.test(imageSha256)) throw new Error('ข้อมูลอ้างอิงภาพไม่ถูกต้อง กรุณาเลือกภาพใหม่')
+  if (productImage !== undefined && !isCroppedProductImage(productImage)) throw new Error('รูปสินค้าที่ครอปไม่ถูกต้อง กรุณาครอปใหม่')
   return Object.freeze({ payload: Object.freeze({
     operationId, confirmed: true as const, name: normalizedText(fields.name),
     brand: normalizedText(fields.brand) || null, packageSize: normalizedText(fields.packageSize) || null,
     sourcePriceMinor: priceMinor(fields.sourcePrice), upc: fields.upc.trim() || null,
     retailerCode: normalizedText(fields.retailerCode) || null, imageSha256: imageSha256?.toLowerCase() ?? null,
+    ...(productImage ? { productImage: Object.freeze({ ...productImage }) } : {}),
   }) })
 }
 
@@ -191,27 +196,29 @@ function pendingStorage(storage?: PendingStorage): PendingStorage {
 }
 
 function verifiedStoredAttempt(raw: string, accountId: string, key: string): StoredImageAttempt {
-  if (raw.length > 10_240) throw new Error('IMAGE_PENDING_INVALID')
+  if (raw.length > 196_608) throw new Error('IMAGE_PENDING_INVALID')
   let stored: unknown
   try { stored = JSON.parse(raw) }
   catch { throw new Error('IMAGE_PENDING_INVALID') }
   if (!record(stored) || stored.version !== 1 || stored.accountId !== accountId || typeof stored.createdAt !== 'string'
     || !Number.isFinite(Date.parse(stored.createdAt)) || !record(stored.payload)
-    || Object.keys(stored).length !== 4 || Object.keys(stored.payload).length !== PENDING_PAYLOAD_KEYS.length) throw new Error('IMAGE_PENDING_INVALID')
+    || Object.keys(stored).length !== 4 || Object.keys(stored.payload).length !== PENDING_PAYLOAD_KEYS.length + ('productImage' in stored.payload ? 1 : 0)) throw new Error('IMAGE_PENDING_INVALID')
   const payload = stored.payload
   if (PENDING_PAYLOAD_KEYS.some((field) => !(field in payload))) throw new Error('IMAGE_PENDING_INVALID')
   if (payload.confirmed !== true || typeof payload.operationId !== 'string' || typeof payload.name !== 'string'
     || !nullableText(payload.brand) || !nullableText(payload.packageSize) || !nullableText(payload.upc) || !nullableText(payload.retailerCode)
-    || !nullablePrice(payload.sourcePriceMinor) || !(payload.imageSha256 === null || typeof payload.imageSha256 === 'string')) throw new Error('IMAGE_PENDING_INVALID')
+    || !nullablePrice(payload.sourcePriceMinor) || !(payload.imageSha256 === null || typeof payload.imageSha256 === 'string')
+    || 'productImage' in payload && !isCroppedProductImage(payload.productImage)) throw new Error('IMAGE_PENDING_INVALID')
   let attempt: ImageImportAttempt
   try {
     attempt = createImageImportAttempt({
       name: payload.name, brand: payload.brand ?? '', packageSize: payload.packageSize ?? '',
       sourcePrice: payload.sourcePriceMinor === null ? '' : (payload.sourcePriceMinor / 100).toFixed(2),
       upc: payload.upc ?? '', retailerCode: payload.retailerCode ?? '',
-    }, payload.imageSha256, payload.operationId)
+    }, payload.imageSha256, payload.operationId, payload.productImage as CroppedProductImage | undefined)
   } catch { throw new Error('IMAGE_PENDING_INVALID') }
   if (PENDING_PAYLOAD_KEYS.some((field) => payload[field] !== attempt.payload[field as keyof ImageImportPayload])
+    || JSON.stringify(payload.productImage) !== JSON.stringify(attempt.payload.productImage)
     || key !== `${accountPrefix(accountId)}${attempt.payload.operationId}`) throw new Error('IMAGE_PENDING_INVALID')
   return { version: 1, accountId, createdAt: stored.createdAt, payload: attempt.payload }
 }
@@ -228,7 +235,7 @@ function storedAccountAttempts(accountId: string, storage: PendingStorage): Stor
   return records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.payload.operationId.localeCompare(b.payload.operationId))
 }
 
-/** Only human-confirmed fields and UUID are durable. Never store image bytes or preview URLs. */
+/** Only confirmed fields, UUID and the final small crop are durable. Never store the original screenshot or preview URL. */
 export function loadPendingImageAttempt(accountId: string, storage?: PendingStorage): ImageImportAttempt | null {
   const pending = storedAccountAttempts(accountId, pendingStorage(storage))[0]
   return pending ? Object.freeze({ payload: pending.payload }) : null
@@ -348,7 +355,9 @@ export async function requestImageExtraction(
       || !Array.isArray(data.warnings) || data.warnings.some((value) => typeof value !== 'string')) {
       return { status: 'error', message: 'ผลอ่านภาพยังไม่ครบถ้วน กรุณาลองใหม่หรือกรอกข้อมูลจากภาพเอง ยังไม่มีการสร้างสินค้า', retryable: true, code: 'INVALID_RESPONSE' }
     }
-    return { status: 'success', draft: data.draft, imageSha256: data.imageSha256.toLowerCase(), warnings: (data.warnings as string[]).slice(0, 20).map((value) => value.slice(0, 500)) }
+    const draft = { ...data.draft }
+    if ('productImageBounds' in draft && !validCropBounds(draft.productImageBounds)) delete draft.productImageBounds
+    return { status: 'success', draft, imageSha256: data.imageSha256.toLowerCase(), warnings: (data.warnings as string[]).slice(0, 20).map((value) => value.slice(0, 500)) }
   } catch (error) {
     if (error instanceof RequestStop && error.kind === 'cancelled') return { status: 'cancelled' }
     return { status: 'error', message: error instanceof RequestStop
@@ -369,6 +378,7 @@ export async function requestImageConfirmation(
       if (response.status === 401 || code === 'UNAUTHENTICATED') return { status: 'uncertain', code: code ?? 'UNAUTHENTICATED', message: 'กรุณาเข้าสู่ระบบด้วยบัญชีเดิม แล้วตรวจสอบด้วยรหัสรายการเดิม สินค้าอาจถูกบันทึกแล้ว' }
       if (response.status === 403 || code === 'UNTRUSTED_ORIGIN') return { status: 'uncertain', code: code ?? 'UNTRUSTED_ORIGIN', message: 'คำขอนี้ไม่ได้รับอนุญาต โปรดเปิด SmartCart จากหน้าเว็บหลัก แล้วตรวจสอบด้วยรหัสรายการเดิม' }
       if (code === 'INVALID_IMAGE_PRODUCT' && (response.status === 400 || response.status === 422)) return { status: 'error', code, ...imageErrors.INVALID_IMAGE_PRODUCT }
+      if ((code === 'PRODUCT_IMAGE_INVALID' && response.status === 400) || (code === 'PRODUCT_IMAGE_TOO_LARGE' && response.status === 413)) return { status: 'error', code, message: 'รูปสินค้าที่ครอปยังไม่ถูกต้อง กรุณาครอปใหม่ก่อนบันทึก', retryable: false }
       return { status: 'uncertain', code, message: code === 'IMAGE_IMPORT_CONFLICT'
         ? 'รหัสรายการนี้มีข้อมูลที่ไม่ตรงกัน จึงยังยืนยันผลไม่ได้ ห้ามส่งเป็นสินค้าใหม่ กรุณาตรวจสอบรายการเดิม'
         : 'ระบบตอบกลับไม่สมบูรณ์ สินค้าอาจถูกบันทึกแล้ว กรุณาตรวจสอบด้วยข้อมูลและรหัสรายการเดิม' }

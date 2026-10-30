@@ -9,7 +9,7 @@ export function localRoundReport(round: ClosedRound): RoundReport {
   return { id: round.id, checkedOutAt: round.payload.checkedOutAt, createdAt: round.payload.checkedOutAt, storeName: round.payload.storeName,
     paymentMethod: round.payload.paymentMethod, note: round.payload.note, totalMinor: cartTotal(round.lines), lineCount: round.lines.length,
     lines: round.lines.map(line => ({ id: line.id, productId: line.product.id, productName: line.product.name, productSku: line.product.sku ?? line.product.id,
-      productUpc: line.product.upc, packageSize: line.product.packageSize, unitPriceMinor: line.unitPriceMinor, quantity: line.quantity,
+      productUpc: line.product.upc, packageSize: line.product.packageSize, imageUrl: line.product.imageUrl, unitPriceMinor: line.unitPriceMinor, quantity: line.quantity,
       totalMinor: Math.round(line.unitPriceMinor * line.quantity), note: line.note })) }
 }
 export function roundCsv(report: RoundReport, status = 'บันทึกเข้า D1 แล้ว'): string {
@@ -71,7 +71,7 @@ export function RoundReports({ accountId, apiOrigin, online, version, rounds, in
     <PageHeader title="สรุปรอบซื้อ" id="round-report-title" headingRef={heading} onBack={closeReport} trailing={<button className="icon-button" aria-label="ส่งออก CSV" onClick={() => download(selected, receiptSource)}><Icon name="share" /></button>} />
     <div className="page-content receipt-content"><div className="receipt-identity"><div><h2>{selected.storeName ?? 'ไม่ระบุร้าน'}</h2><p className="muted">{formatPurchaseDate(selected.checkedOutAt)}</p></div><span className={`status-chip${isPending ? ' pending' : ''}`}><Icon name={isPending ? 'clock' : 'checkSmall'} />{isPending ? 'รอซิงก์' : 'ซิงก์แล้ว'}</span></div>
       <div className="round-amount"><span className="muted">ยอดรวมรอบนี้</span><p className="amount">{formatMoney(selected.totalMinor)}</p></div><hr />
-      <div className="receipt-lines">{selected.lines.map(line => <div className="product-row" key={line.id}><ProductThumb /><span className="row-description"><strong>{line.productName}</strong><small>{line.packageSize ?? ''}</small></span><span className="row-amount"><strong>{formatMoney(line.totalMinor)}</strong><small>{line.quantity} × {formatMoney(line.unitPriceMinor)}</small></span></div>)}</div>
+      <div className="receipt-lines">{selected.lines.map(line => <div className="product-row" key={line.id}><ProductThumb imageUrl={line.imageUrl} /><span className="row-description"><strong>{line.productName}</strong><small>{line.packageSize ?? ''}</small></span><span className="row-amount"><strong>{formatMoney(line.totalMinor)}</strong><small>{line.quantity} × {formatMoney(line.unitPriceMinor)}</small></span></div>)}</div>
       <div className="summary-row small"><span>ชำระด้วย</span><span>{paymentLabel(selected.paymentMethod)}</span></div>
       {isPending ? <p className="pending-caption">อย่าล้างข้อมูลก่อนซิงก์</p> : null}
       <details className="disclosure"><summary>รายละเอียดรอบ<Icon name="down" /></summary><div><p className="round-id">รหัสรอบ: {selected.id}</p><p className="muted">{isPending ? 'เก็บบนเครื่อง ยังรอยืนยันจาก D1' : receiptSource}</p>{selected.note ? <p>{selected.note}</p> : null}{selected.lines.map(line => <p className="muted" key={line.id}>{line.productName} · SKU {line.productSku} · UPC {line.productUpc ?? 'ไม่มี'}{line.note ? ` · ${line.note}` : ''}</p>)}<p className="muted">บันทึกการชำระด้วยตนเอง ไม่ใช่ใบเสร็จจากร้านค้า</p></div></details>

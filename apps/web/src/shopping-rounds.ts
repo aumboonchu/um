@@ -8,7 +8,7 @@ export type RoundPayload = CheckoutFields & { operationId: string; accountId: st
 export type ClosedRound = { key: string; accountId: string; kind: 'closed'; id: string; status: 'pending' | 'synced'; payload: RoundPayload; lines: CartLine[] }
 type StoredRound = RoundDraft | ClosedRound
 export type RoundSummary = { id: string; checkedOutAt: string; storeName: string | null; paymentMethod: string; note: string | null; totalMinor: number; lineCount: number; createdAt: string }
-export type RoundReport = RoundSummary & { lines: { id: string; productId: string; productName: string; productSku: string; productUpc: string | null; packageSize: string | null; unitPriceMinor: number; quantity: number; totalMinor: number; note: string | null }[] }
+export type RoundReport = RoundSummary & { lines: { id: string; productId: string; productName: string; productSku: string; productUpc: string | null; packageSize: string | null; imageUrl?: string | null; unitPriceMinor: number; quantity: number; totalMinor: number; note: string | null }[] }
 export type RoundPage = { month: string; items: RoundSummary[]; nextCursor: string | null; summary: { roundCount: number; totalPaidMinor: number }; legacy: { count: number; totalMinor: number } }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
@@ -162,6 +162,7 @@ export function validRoundReport(v: unknown): v is RoundReport {
   if (!validRoundSummary(v) || !('lines' in v) || !Array.isArray(v.lines) || v.lines.length !== v.lineCount) return false
   return v.lines.every(line => object(line) && typeof line.id === 'string' && UUID.test(line.id) && typeof line.productId === 'string'
     && typeof line.productName === 'string' && typeof line.productSku === 'string' && nullableText(line.productUpc) && nullableText(line.packageSize)
+    && (line.imageUrl === undefined || nullableText(line.imageUrl))
     && money(line.unitPriceMinor) && line.unitPriceMinor > 0 && typeof line.quantity === 'number' && Number.isFinite(line.quantity) && line.quantity > 0
     && money(line.totalMinor) && line.totalMinor === Math.round(line.unitPriceMinor * line.quantity) && nullableText(line.note))
     && v.lines.reduce((sum: number, line: { totalMinor: number }) => sum + line.totalMinor, 0) === v.totalMinor

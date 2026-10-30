@@ -390,7 +390,7 @@ function SearchForm({ value, setValue, onSubmit, placeholder }: { value: string;
 
 function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: () => void }) {
   return <article className="history-card">
-    {item.imageUrl ? <img src={item.imageUrl} alt="" /> : <div className="small-image-placeholder" aria-hidden="true">สินค้า</div>}
+    <ProductThumb imageUrl={item.imageUrl} />
     <div><strong>{item.productName}</strong><p>{[item.productBrand, `SKU: ${item.productSku ?? item.productId}`, item.productUpc ? `UPC: ${item.productUpc}` : null, item.storeName].filter(Boolean).join(' · ')}</p><small>{formatDate(item.purchasedAt)} · {item.quantity} ชิ้น × {formatBaht(item.unitPriceMinor)}</small></div>
     <strong className="history-total">{formatBaht(item.totalMinor)}</strong>
     <button type="button" className="secondary-button card-detail-link" onClick={onOpen} aria-label={`ดูรายละเอียดรายการซื้อ ${item.productName}`}>ดูรายละเอียด / แก้ไข</button>
@@ -398,7 +398,7 @@ function HistoryCard({ item, onOpen }: { item: PurchaseHistoryItem; onOpen: () =
 }
 
 function MyProductCard({ item, onOpen, onBuy, disabled, buying }: { item: MyProductItem; onOpen: () => void; onBuy: () => void; disabled: boolean; buying: boolean }) {
-  return <article className="library-row"><button className="library-details" onClick={onOpen} aria-label={`ดูรายละเอียดสินค้า ${item.name}`}><ProductThumb imageUrl={item.imageUrl} /><span className="row-description"><strong>{item.name}</strong><small>{item.packageSize ?? item.brand ?? `ซื้อ ${item.purchaseCount} ครั้ง`}</small></span></button><button className="buy-again" onClick={onBuy} disabled={disabled} aria-label={`ซื้อ ${item.name} อีก`}>{buying ? 'กำลังเปิด…' : 'ซื้ออีก'}</button></article>
+  return <article className="library-row"><ProductThumb imageUrl={item.imageUrl} /><button className="library-details" onClick={onOpen} aria-label={`ดูรายละเอียดสินค้า ${item.name}`}><span className="row-description"><strong>{item.name}</strong><small>{item.packageSize ?? item.brand ?? `ซื้อ ${item.purchaseCount} ครั้ง`}</small></span></button><button className="buy-again" onClick={onBuy} disabled={disabled} aria-label={`ซื้อ ${item.name} อีก`}>{buying ? 'กำลังเปิด…' : 'ซื้ออีก'}</button></article>
 }
 
 function formatBaht(minor: number): string {

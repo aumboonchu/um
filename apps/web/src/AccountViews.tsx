@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiFetch } from './auth-client'
 import { ProductEditor } from './ProductEditor'
+import { ProductThumb } from './ui'
 import {
   bangkokMonth, createChangeAttempt, fieldsForPurchase, formatMoney, formatPurchaseDate, getDashboard, getProductDetail, getPurchaseDetail,
   listPendingChanges, loadPendingChange, managementMessage, sendChange,
@@ -166,7 +167,7 @@ export function ProductDetailView({ apiOrigin, accountId, id, online, onBack, on
   return <section className="content-panel detail-panel" aria-labelledby="product-detail-title"><button className="secondary-button back-button" onClick={onBack}>← กลับ</button><h2 id="product-detail-title" tabIndex={-1} ref={heading}>รายละเอียดสินค้า</h2>
     {!online ? <p className="status-message">ออฟไลน์ — แสดงเฉพาะข้อมูลที่โหลดไว้ในหน้านี้</p> : null}
     {loading ? <p role="status">กำลังโหลดสินค้า…</p> : null}{error ? <p className="error-message" role="alert">{error}</p> : null}
-    {data ? <><div className="detail-product">{data.imageUrl ? <img src={data.imageUrl} alt="" /> : null}<h3>{data.name}</h3><p>{[data.brand, data.packageSize].filter(Boolean).join(' · ')}</p><p>SKU: {data.sku}</p><p>UPC / EAN: {data.upc ?? 'ยังไม่มีบาร์โค้ด'}</p>{data.category ? <p>หมวดหมู่: {data.category}</p> : null}</div>
+    {data ? <><div className="detail-product">{data.imageUrl ? <ProductThumb imageUrl={data.imageUrl} large /> : null}<h3>{data.name}</h3><p>{[data.brand, data.packageSize].filter(Boolean).join(' · ')}</p><p>SKU: {data.sku}</p><p>UPC / EAN: {data.upc ?? 'ยังไม่มีบาร์โค้ด'}</p>{data.category ? <p>หมวดหมู่: {data.category}</p> : null}</div>
       <ProductEditor product={data} accountId={accountId} apiOrigin={apiOrigin} online={online} disabled={loading} onProduct={setData} onChanged={onChanged} onDirtyChange={onDirtyChange} onActiveChange={setEditorActive} />
       {!editorActive ? <>
       <dl className="summary-grid"><div><dt>จำนวนรายการซื้อ</dt><dd>{data.purchaseCount}</dd></div><div><dt>ยอดสะสม</dt><dd>{formatMoney(data.totalSpentMinor)}</dd></div><div><dt>ราคาต่ำสุดที่เคยซื้อ</dt><dd>{data.minimumPriceMinor === null ? '—' : formatMoney(data.minimumPriceMinor)}</dd></div><div><dt>ราคาสูงสุดที่เคยซื้อ</dt><dd>{data.maximumPriceMinor === null ? '—' : formatMoney(data.maximumPriceMinor)}</dd></div></dl>

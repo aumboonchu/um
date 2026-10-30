@@ -81,6 +81,30 @@ async function editName(value: string) {
   fireEvent.change(screen.getByLabelText('ชื่อสินค้า'), { target: { value } })
 }
 describe('mobile admin journey', () => {
+  it('keeps image viewers outside interactive row buttons and opens the crop without navigating to product editing', async () => {
+    current = { ...current, imageUrl: 'https://example.test/cropped-product.jpg' }
+    await mount(); await enterCatalog()
+    expect(document.querySelector('button [tabindex], button button')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'ดูรูปสินค้า' }))
+    expect(screen.getByRole('dialog', { name: 'รูปสินค้า' })).toBeTruthy()
+    expect(screen.queryByLabelText('ชื่อสินค้า')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'ปิดรูปสินค้า' }))
+    await editName('แก้ชื่อไว้ก่อน')
+    expect((screen.getByLabelText('เปลี่ยนรูปสินค้า') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText('ชื่อสินค้า') as HTMLInputElement).value).toBe('แก้ชื่อไว้ก่อน')
+  })
+  it('opens a durable cropped-image request after admin re-login without storing a full source screenshot', async () => {
+    const cropped = { data: '/9j/2Q==', sha256: 'f'.repeat(64), width: 64, height: 64 }
+    const { persistAdminImage } = await import('../src/admin-product-image')
+    persistAdminImage({ version: 1, productId: id, payload: { accountId: account, operationId: crypto.randomUUID(), expectedRevision: 0, productImage: cropped } })
+    mustChange = false
+    await mount(); await login('new-password-123')
+    const retry = await screen.findByRole('button', { name: 'ตรวจสอบรูปด้วยรหัสเดิม' })
+    await waitFor(() => expect((retry as HTMLButtonElement).disabled).toBe(false))
+    expect((screen.getByLabelText('ชื่อสินค้า').closest('fieldset') as HTMLFieldSetElement).disabled).toBe(true)
+    expect(document.querySelector('.admin-crop-preview .product-photo')?.getAttribute('src')).toBe(`data:image/jpeg;base64,${cropped.data}`)
+    expect(localStorage.getItem(`smartcart-admin-image-v1:${account}`)).not.toContain(token)
+  })
   it('forces a password change before reading any products and never persists admin credentials', async () => {
     await mount(); await login()
     await screen.findByRole('heading', { name: 'ตั้งรหัสผ่านใหม่' })

@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode, type Ref } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
+import { createPortal } from 'react-dom'
 
 export const AccountPhotoContext = createContext<string | null>(null)
 
@@ -39,9 +40,41 @@ export function PageHeader({ title, id, headingRef, onBack, onAccount, trailing 
   </header>
 }
 export function ProductThumb({ imageUrl, large = false }: { imageUrl?: string | null; large?: boolean }) {
-  return <span className={`product-thumb${large ? ' product-thumb-large' : ''}`}>
-    {imageUrl ? <img className="product-photo" src={imageUrl} alt="" loading="lazy" /> : <Icon name={large ? 'boxLarge' : 'box'} />}
-  </span>
+  const [open, setOpen] = useState(false), [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const trigger = useRef<HTMLSpanElement>(null)
+  const available = Boolean(imageUrl && imageUrl !== failedUrl)
+  useEffect(() => { setOpen(false) }, [imageUrl])
+  return <><span ref={trigger} className={`product-thumb${large ? ' product-thumb-large' : ''}`}
+    role={available ? 'button' : undefined} tabIndex={available ? 0 : undefined} aria-label={available ? 'ดูรูปสินค้า' : undefined}
+    aria-haspopup={available ? 'dialog' : undefined} onClick={available ? event => { event.preventDefault(); event.stopPropagation(); setOpen(true) } : undefined}
+    onKeyDown={available ? event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); setOpen(true) } } : undefined}>
+    {available ? <img className="product-photo" src={imageUrl!} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => { setFailedUrl(imageUrl!); setOpen(false) }} /> : <Icon name={large ? 'boxLarge' : 'box'} />}
+  </span>{open && available ? <ProductImageViewer imageUrl={imageUrl!} onClose={() => setOpen(false)} returnFocus={trigger.current} /> : null}</>
+}
+function ProductImageViewer({ imageUrl, onClose, returnFocus }: { imageUrl: string; onClose: () => void; returnFocus: HTMLElement | null }) {
+  const close = useRef<HTMLButtonElement>(null), dialog = useRef<HTMLDivElement>(null), [failed, setFailed] = useState(false)
+  const onCloseRef = useRef(onClose); onCloseRef.current = onClose
+  useEffect(() => {
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    close.current?.focus({ preventScroll: true })
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCloseRef.current() }
+      if (event.key === 'Tab') { event.preventDefault(); close.current?.focus() }
+    }
+    const focus = (event: FocusEvent) => { if (event.target instanceof Node && !dialog.current?.contains(event.target)) close.current?.focus({ preventScroll: true }) }
+    document.addEventListener('keydown', key, true); document.addEventListener('focusin', focus)
+    return () => {
+      document.body.style.overflow = previous
+      document.removeEventListener('keydown', key, true); document.removeEventListener('focusin', focus)
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true })
+    }
+  }, [returnFocus])
+  return createPortal(<div ref={dialog} className="product-image-viewer" role="dialog" aria-modal="true" aria-label="รูปสินค้า"
+    onClick={event => { event.stopPropagation(); if (event.target === event.currentTarget) onClose() }} onPointerDown={event => event.stopPropagation()}>
+    <button ref={close} type="button" className="product-image-close" aria-label="ปิดรูปสินค้า" onClick={event => { event.stopPropagation(); onClose() }}>×</button>
+    {failed ? <p role="status">ยังโหลดรูปไม่ได้</p> : <img className="product-image-full" src={imageUrl} alt="รูปสินค้า" referrerPolicy="no-referrer" onError={() => setFailed(true)} />}
+  </div>, document.body)
 }
 export function useMobileViewport() {
   useEffect(() => {

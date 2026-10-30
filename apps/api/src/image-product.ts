@@ -1,5 +1,6 @@
 import { currentAccount, isTrustedOrigin, type AuthEnv } from './auth'
 import type { Product } from './products'
+import { croppedImageUrl, parseProductImage, type ProductImage } from './product-images'
 
 type ConfirmedImageInput = {
   operationId: string
@@ -10,6 +11,7 @@ type ConfirmedImageInput = {
   upc: string | null
   retailerCode: string | null
   imageSha256: string | null
+  productImage?: unknown
 }
 
 type ImportReceipt = { payload_hash: string; product_id: string }
@@ -34,6 +36,8 @@ export async function confirmImageProduct(request: Request, env: AuthEnv): Promi
   const account = await currentAccount(request, env)
   if (!account) throw new ImageProductError('UNAUTHENTICATED', 401)
   const input = parseInput(await readJson(request))
+  const productImage: ProductImage | undefined = input.productImage === undefined ? undefined : await parseProductImage(input.productImage)
+  if (productImage) input.productImage = { data: productImage.data, sha256: productImage.sha256, width: productImage.width, height: productImage.height }
   // Fixed property order and normalized scalar values make retries deterministic.
   const { operationId: _, ...confirmedFields } = input
   const payloadHash = await sha256Hex(JSON.stringify(confirmedFields))
@@ -77,6 +81,16 @@ export async function confirmImageProduct(request: Request, env: AuthEnv): Promi
          regular_price_minor, availability, fetched_at)
         VALUES (?, ?, 'user_image', NULL, NULL, ?, NULL, 'unknown', ?)`)
         .bind(crypto.randomUUID(), productId, input.sourcePriceMinor, now))
+    }
+    if (productImage) {
+      // Normal imports may fill a missing image, never replace another catalog photo.
+      statements.push(env.DB.prepare(`INSERT INTO product_images (product_id,jpeg,sha256,width,height,created_at,updated_at)
+        SELECT id, ?, ?, ?, ?, ?, ? FROM products WHERE id = ? AND image_url IS NULL
+        ON CONFLICT(product_id) DO NOTHING`)
+        .bind(productImage.bytes.buffer, productImage.sha256, productImage.width, productImage.height, now, now, productId))
+      statements.push(env.DB.prepare(`UPDATE products SET image_url = ?, updated_at = ? WHERE id = ? AND image_url IS NULL
+        AND EXISTS (SELECT 1 FROM product_images WHERE product_id = products.id AND sha256 = ?)`)
+        .bind(croppedImageUrl(productId, productImage.sha256, env), now, productId, productImage.sha256))
     }
     try {
       // Product, fingerprint, receipt and snapshot either commit together or roll back.
@@ -131,7 +145,7 @@ async function loadProduct(id: string, env: AuthEnv): Promise<Product> {
 
 function parseInput(value: unknown): ConfirmedImageInput {
   if (!isRecord(value) || value.confirmed !== true) invalid()
-  const allowed = new Set(['operationId', 'confirmed', 'name', 'brand', 'packageSize', 'sourcePriceMinor', 'upc', 'retailerCode', 'imageSha256'])
+  const allowed = new Set(['operationId', 'confirmed', 'name', 'brand', 'packageSize', 'sourcePriceMinor', 'upc', 'retailerCode', 'imageSha256', 'productImage'])
   if (Object.keys(value).some((key) => !allowed.has(key))) invalid()
   const operationId = requiredText(value.operationId, 36)
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) invalid()
@@ -148,6 +162,7 @@ function parseInput(value: unknown): ConfirmedImageInput {
     brand: optionalText(value.brand, 100), packageSize: optionalText(value.packageSize, 100),
     sourcePriceMinor, upc, retailerCode: optionalText(value.retailerCode, 80),
     imageSha256: imageSha256?.toLowerCase() ?? null,
+    ...(value.productImage === undefined ? {} : { productImage: value.productImage }),
   }
 }
 
@@ -179,7 +194,7 @@ function optionalText(value: unknown, limit: number): string | null {
 function invalid(): never { throw new ImageProductError('INVALID_IMAGE_PRODUCT', 400) }
 
 async function readJson(request: Request): Promise<unknown> {
-  const limit = 10 * 1024
+  const limit = 192 * 1024
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')
     || Number(request.headers.get('content-length')) > limit || !request.body) invalid()
   const reader = request.body.getReader()

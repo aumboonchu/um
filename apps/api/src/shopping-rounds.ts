@@ -112,9 +112,11 @@ export async function roundDetail(id: string, userId: string, env: AuthEnv) {
   if (!UUID.test(id)) return invalid()
   const row = await env.DB.prepare('SELECT * FROM shopping_rounds WHERE id = ? AND user_id = ?').bind(id.toLowerCase(), userId).first<RoundRow>()
   if (!row) throw new ShoppingRoundError('ROUND_NOT_FOUND', 404)
-  const lines = await env.DB.prepare(`SELECT purchase_id AS id, product_id AS productId, product_name AS productName,
-    product_sku AS productSku, product_upc AS productUpc, package_size AS packageSize, unit_price_minor AS unitPriceMinor,
-    quantity, total_minor AS totalMinor, note FROM shopping_round_lines WHERE round_id = ? ORDER BY position`).bind(row.id).all()
+  // Images are current catalog decoration only; immutable paid-round names and amounts stay in l.
+  const lines = await env.DB.prepare(`SELECT l.purchase_id AS id, l.product_id AS productId, l.product_name AS productName,
+    l.product_sku AS productSku, l.product_upc AS productUpc, l.package_size AS packageSize, l.unit_price_minor AS unitPriceMinor,
+    l.quantity, l.total_minor AS totalMinor, l.note, p.image_url AS imageUrl
+    FROM shopping_round_lines l LEFT JOIN products p ON p.id = l.product_id WHERE l.round_id = ? ORDER BY l.position`).bind(row.id).all()
   return { ...summary(row), lines: lines.results }
 }
 export async function listRounds(url: URL, userId: string, env: AuthEnv) {

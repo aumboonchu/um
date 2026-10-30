@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } 
 import { apiFetch } from './auth-client'
 import BarcodeScanner from './BarcodeScanner'
 import { Icon } from './ui'
+import { ProductImageCropper } from './ProductImageCropper'
+import { cropPreviewUrl, type CropBounds, type CroppedProductImage } from './product-image-crop'
 import {
   clearPendingImageAttempt, createImageImportAttempt, emptyImageFields, fieldsFromImageDraft, imageFingerprint,
   loadPendingImageAttempt, prepareImageUpload, requestPersistedImageConfirmation, requestImageExtraction, validateSourceImage,
@@ -34,6 +36,9 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
   const [feedback, setFeedback] = useState<Feedback | null>(null)
   const [savedProduct, setSavedProduct] = useState<ConfirmedImageProduct | null>(null)
   const [storageBlocked, setStorageBlocked] = useState(false)
+  const [productImage, setProductImage] = useState<CroppedProductImage | null>(null)
+  const [cropOpen, setCropOpen] = useState(false), [skipPhoto, setSkipPhoto] = useState(false)
+  const [cropBounds, setCropBounds] = useState<CropBounds | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const feedbackRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<Stage>('idle')
@@ -64,6 +69,9 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
       if (!pending) return
       attempt.current = pending
       fingerprint.current = pending.payload.imageSha256
+      setProductImage(pending.payload.productImage ?? null)
+      setSkipPhoto(!pending.payload.productImage)
+      setCropOpen(false)
       setFields(fieldsFromImageDraft(pending.payload))
       setHasReview(true)
       setChecked(true)
@@ -128,6 +136,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     setAllowExtractionRetry(true)
     setFeedback(null)
     setSavedProduct(null)
+    setProductImage(null); setSkipPhoto(false); setCropOpen(false); setCropBounds(null)
     setStage('idle')
     if (!nextFile && fileInput.current) fileInput.current.value = ''
     onReset?.()
@@ -180,6 +189,8 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
         setFields({ ...readFields, upc: readFields.upc || scannedUpc || '' })
         setWarnings(result.warnings)
         setHasReview(true)
+        setCropBounds(result.draft.productImageBounds ?? null)
+        setCropOpen(true)
         setStage('review')
         setFeedback({ kind: 'info', title: 'อ่านภาพแล้ว — โปรดตรวจสอบข้อมูล', message: 'AI อาจอ่านชื่อ ราคา หรือรหัสผิดได้ ยังไม่มีการสร้างสินค้า แก้ไขข้อมูลด้านล่างแล้วติ๊กยืนยันก่อนบันทึก' })
       } else if (result.status === 'error') {
@@ -205,6 +216,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     setFields({ ...emptyImageFields(), upc: scannedUpc ?? '' })
     setWarnings([])
     setHasReview(true)
+    setCropOpen(true)
     setChecked(false)
     setStage('review')
     setFeedback({ kind: 'info', title: 'กรอกข้อมูลเองจากภาพ', message: 'ยังไม่ได้อ่านข้อมูลอัตโนมัติ กรุณาดูภาพและกรอกข้อมูลเองให้ถูกต้อง ยังไม่มีการสร้างสินค้าจนกว่าคุณจะยืนยัน' })
@@ -224,11 +236,16 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
       setFeedback({ kind: 'error', title: 'กรุณาตรวจสอบและยืนยันข้อมูลก่อน', message: 'ติ๊กยืนยันหลังตรวจชื่อ ราคา และรหัสสินค้าแล้ว จึงจะบันทึกเป็น SKU ได้' })
       return
     }
+    if (!attempt.current && !productImage && !skipPhoto) {
+      setFeedback({ kind: 'error', title: 'เลือกรูปสินค้าก่อน', message: 'ครอปเฉพาะรูปสินค้า หรือเลือกไม่ใส่รูปสินค้า' })
+      setCropOpen(true)
+      return
+    }
     if (!attempt.current && scannedUpc && fields.upc !== scannedUpc) {
       setFeedback({ kind: 'error', title: 'บาร์โค้ดไม่ตรงกับที่สแกน', message: `รอบนี้กำลังเพิ่มสินค้าบาร์โค้ด ${scannedUpc} กรุณาตรวจว่าภาพเป็นสินค้าตัวเดียวกัน และยืนยันบาร์โค้ดให้ตรงก่อนบันทึก` })
       return
     }
-    try { attempt.current ??= createImageImportAttempt(fields, fingerprint.current) }
+    try { attempt.current ??= createImageImportAttempt(fields, fingerprint.current, undefined, productImage ?? undefined) }
     catch (error) {
       setFeedback({ kind: 'error', title: 'ข้อมูลสินค้ายังไม่ครบหรือไม่ถูกต้อง', message: error instanceof Error ? error.message : 'กรุณาตรวจสอบข้อมูลอีกครั้ง' })
       return
@@ -294,11 +311,20 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     <p className="image-import-notice">รองรับภาพจากแอป Big C, เว็บ Big C และแอป Makro Pro — ให้เห็นชื่อ ขนาด และราคา</p>
     <p className="image-import-field-help">สินค้าขายเป็นแพ็ก: บันทึกราคาต่อแพ็กและขนาดให้ครบ เมื่อนำไปบันทึกรายการซื้อ จำนวน 1 หมายถึง 1 แพ็ก ไม่ใช่จำนวนชิ้นภายในแพ็ก</p>
     </> : null}
-    {!hasReview ? <p id={`${id}-privacy`} className="image-import-notice">{compact ? 'ภาพจากแอป / เว็บ Big C หรือ Makro Pro · ส่งให้ Cloudflare AI อ่าน กรุณาครอปข้อมูลส่วนตัวออกก่อน' : 'ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บเฉพาะข้อมูลที่คุณยืนยัน ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกและให้เห็นสินค้าชัดเจน'}</p> : null}
+    {!hasReview ? <p id={`${id}-privacy`} className="image-import-notice">{compact ? 'ภาพจากแอป / เว็บ Big C หรือ Makro Pro · Cloudflare AI อ่านข้อมูล เก็บเฉพาะรูปที่ครอป กรุณาตัดข้อมูลส่วนตัวออกก่อน' : 'ภาพจะส่งให้ Cloudflare AI อ่านข้อมูล SmartCart เก็บข้อมูลที่คุณยืนยันและเฉพาะรูปสินค้าที่ครอปแล้ว ไม่บันทึกภาพต้นฉบับลงฐานข้อมูล กรุณาครอปข้อมูลส่วนตัวออกก่อนส่ง'}</p> : null}
     <label htmlFor={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined}>{compact ? 'เลือกรูปสินค้า' : 'เลือกภาพหน้าจอหรือรูปสินค้า (JPG / PNG / WebP ไม่เกิน 10 MB)'}</label>
     <input ref={fileInput} id={`${id}-file`} className={compact && hasReview ? 'sr-only' : undefined} type="file" accept="image/jpeg,image/png,image/webp" onChange={selectImage} disabled={!canImport || busy || locked} aria-describedby={!hasReview ? `${id}-privacy` : undefined} />
     {!canImport ? <p className="status-message">เข้าสู่ระบบด้วย Google และเชื่อมต่ออินเทอร์เน็ตก่อนเพิ่มสินค้าจากภาพ</p> : null}
-    {preview ? <figure className={`image-import-preview${compact && hasReview ? ' selected-image-card' : ''}`}><img src={preview} alt="ภาพสินค้าที่เลือกเพื่ออ่านข้อมูล" /><figcaption>{compact ? 'ภาพที่เลือก' : 'ภาพตัวอย่างบนอุปกรณ์ — ยังไม่ใช่สินค้าที่บันทึกแล้ว'}</figcaption></figure> : compact && hasReview ? <div className="selected-image-card"><Icon name="imageLarge" /><span>ข้อมูลจากภาพ</span></div> : null}
+    {preview && !hasReview ? <figure className="image-import-preview"><img src={preview} alt="ภาพสินค้าที่เลือกเพื่ออ่านข้อมูล" /><figcaption>{compact ? 'ภาพที่เลือก' : 'ภาพตัวอย่างบนอุปกรณ์ — ยังไม่ใช่สินค้าที่บันทึกแล้ว'}</figcaption></figure> : null}
+    {hasReview ? <div className="crop-review">
+      {productImage ? <figure className="crop-preview"><img src={cropPreviewUrl(productImage)} alt="รูปสินค้าที่ครอปแล้ว" /><figcaption>เฉพาะรูปสินค้า</figcaption></figure> : null}
+      {!locked && preparedImage.current ? <>
+        {cropOpen ? <ProductImageCropper source={preparedImage.current} initialBounds={cropBounds} disabled={!canImport || busy} onConfirm={image => {
+          setProductImage(image); setSkipPhoto(false); setCropOpen(false); setChecked(false); setFeedback(null)
+        }} onCancel={() => setCropOpen(false)} /> : <button type="button" className="secondary-button" disabled={!canImport || busy} onClick={() => setCropOpen(true)}>{productImage ? 'ปรับรูปสินค้า' : 'ครอปรูปสินค้า'}</button>}
+        <button type="button" className="text-button" disabled={!canImport || busy} onClick={() => { setProductImage(null); setSkipPhoto(true); setCropOpen(false); setChecked(false) }}>{skipPhoto ? 'เลือกไม่ใส่รูปสินค้าแล้ว' : 'ไม่ใส่รูปสินค้า'}</button>
+      </> : null}
+    </div> : null}
     {!hasReview && file && !busy ? <div className="image-import-actions">
       <button type="button" className="primary-button" disabled={!canRead} onClick={() => void readImage()}>{stage === 'extract-error' ? 'ลองอ่านภาพอีกครั้ง' : 'อ่านข้อมูลจากภาพ'}</button>
       {stage === 'extract-error' && preparedImage.current ? <button type="button" className="secondary-button" onClick={beginManualReview} disabled={!canImport}>กรอกข้อมูลจากภาพเอง</button> : null}
@@ -306,7 +332,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
     </div> : null}
     {feedback ? <div ref={feedbackRef} className={`import-feedback image-import-feedback import-feedback-${feedback.kind === 'info' ? 'loading' : feedback.kind}`} role={feedback.kind === 'error' || feedback.kind === 'uncertain' ? 'alert' : 'status'} aria-live={feedback.kind === 'error' || feedback.kind === 'uncertain' ? 'assertive' : 'polite'} aria-atomic="true" aria-labelledby={`${id}-feedback-title`} tabIndex={-1}>
       <span className={`import-status-icon${busy ? ' import-spinner' : ''}`} aria-hidden="true">{busy ? null : feedback.kind === 'success' ? '✓' : feedback.kind === 'info' ? 'i' : '!'}</span>
-      <div className="import-content"><h3 id={`${id}-feedback-title`}>{feedback.title}</h3><p>{compact && feedback.kind === 'info' ? busy ? 'ยังไม่ได้สร้างสินค้า' : 'ตรวจข้อมูลก่อนบันทึก' : feedback.message}</p>
+      <div className="import-content"><h3 id={`${id}-feedback-title`}>{feedback.title}</h3><p>{compact && feedback.kind === 'info' ? busy ? 'ยังไม่ได้สร้างสินค้า' : 'ครอปเฉพาะสินค้า แล้วตรวจข้อมูลก่อนบันทึก' : feedback.message}</p>
         {feedback.code ? <p className="import-error-code">รหัสการตรวจสอบ: <code>{feedback.code}</code></p> : null}
         {savedProduct ? <div className="import-product-details"><strong>{savedProduct.name}</strong><span>SKU: <strong>{savedProduct.sku}</strong></span></div> : null}
         {busy ? <button type="button" className="import-action" onClick={stopWaiting} disabled={!canImport}>{stage === 'saving' ? 'หยุดรอผล' : 'ยกเลิกการอ่านภาพ'}</button> : null}
@@ -332,7 +358,7 @@ export function ImageImport({ accountId, apiOrigin, canImport, onProduct, onRese
         </>}
         <label className="image-import-confirmation"><input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} required /><span>{compact ? 'ตรวจชื่อ ราคา และบาร์โค้ดแล้ว' : 'ฉันตรวจสอบชื่อ ราคา และรหัสแล้ว ยืนยันบันทึกข้อมูลนี้เป็นสินค้า'}</span></label>
       </fieldset>
-      {!locked ? <div className={`image-import-actions${compact ? ' page-actions' : ''}`}><button type="submit" className="primary-button" disabled={!canImport || busy || !checked}>{compact ? 'บันทึกและใส่ราคา' : 'ยืนยันและบันทึกสินค้าเป็น SKU'}</button><button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport || busy}>ยกเลิก / เลือกภาพใหม่</button></div> : null}
+      {!locked ? <div className={`image-import-actions${compact ? ' page-actions' : ''}`}><button type="submit" className="primary-button" disabled={!canImport || busy || !checked || (!productImage && !skipPhoto)}>{compact ? 'บันทึกและใส่ราคา' : 'ยืนยันและบันทึกสินค้าเป็น SKU'}</button><button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport || busy}>ยกเลิก / เลือกภาพใหม่</button></div> : null}
     </form> : null}
     {stage === 'success' ? <button type="button" className="secondary-button" onClick={() => resetImage()} disabled={!canImport}>เพิ่มสินค้าจากภาพใหม่</button> : null}
   </section>

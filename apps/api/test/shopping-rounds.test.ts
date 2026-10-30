@@ -69,6 +69,16 @@ describe('atomic checkout', () => {
     await env.DB.prepare("UPDATE products SET name = 'changed later', package_size = 'different' WHERE id = 'round-oreo'").run()
     expect((await data<{ lines: unknown[] }>(await get(`rounds/${p.operationId}`))).lines).toMatchObject([{ productName: 'OREO', packageSize: '24.6 g x 12' }, { productName: 'Milk' }])
   })
+  it('decorates a paid report with current product photos without rewriting its snapshot', async () => {
+    const p = payload(); await post(p)
+    const before = (await env.DB.prepare('SELECT * FROM shopping_round_lines WHERE round_id = ? ORDER BY position').bind(p.operationId).all()).results
+    const imageUrl = `${env.API_ORIGIN}/api/v1/product-images/round-oreo/${'a'.repeat(64)}.jpg`
+    await env.DB.prepare('UPDATE products SET image_url = ? WHERE id = ?').bind(imageUrl, 'round-oreo').run()
+    const detail = await data<{ lines: { imageUrl: string | null; productName: string; totalMinor: number }[]; totalMinor: number }>(await get(`rounds/${p.operationId}`))
+    expect(detail.lines).toMatchObject([{ imageUrl, productName: 'OREO', totalMinor: 9000 }, { imageUrl: null, productName: 'Milk', totalMinor: 2500 }])
+    expect(detail.totalMinor).toBe(11500)
+    expect((await env.DB.prepare('SELECT * FROM shopping_round_lines WHERE round_id = ? ORDER BY position').bind(p.operationId).all()).results).toEqual(before)
+  })
   it.each(['PATCH', 'DELETE'])('does not allow %s of one item to break paid-round totals', async method => {
     const p = payload(); await post(p)
     const response = await SELF.fetch(`https://example.test/api/v1/purchases/${p.lines[0].id}`, { method, headers,

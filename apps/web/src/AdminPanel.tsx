@@ -5,6 +5,8 @@ import {
   type AdminEdit, type AdminFields, type AdminProduct, type AdminSession,
 } from './admin-client'
 import { Icon, PageHeader, ProductThumb } from './ui'
+import { AdminProductImage } from './AdminProductImage'
+import { readAdminImage } from './admin-product-image'
 
 export function AdminEntry({ apiOrigin, accountId, online, onOpen }: { apiOrigin: string; accountId: string; online: boolean; onOpen: () => void }) {
   const [eligible, setEligible] = useState(false)
@@ -28,9 +30,11 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   const [product, setProduct] = useState<AdminProduct | null>(null), [fields, setFields] = useState<AdminFields | null>(null)
   const [pending, setPending] = useState<AdminEdit | null>(null), [storageBlocked, setStorageBlocked] = useState(false), [stale, setStale] = useState(false)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('')
+  const [imageDirty, setImageDirty] = useState(false), [imageBusy, setImageBusy] = useState(false), [imagePendingId, setImagePendingId] = useState<string | null>(null)
   const mounted = useRef(true), busyRef = useRef(false), sessionRef = useRef<AdminSession | null>(null), sequence = useRef(0)
   const callbacks = useRef({ onChanged }); callbacks.current = { onChanged }
-  const dirty = busy || Boolean(pending) || Boolean(product && fields && JSON.stringify(fields) !== JSON.stringify(adminFields(product)))
+  const metadataDirty = Boolean(product && fields && JSON.stringify(fields) !== JSON.stringify(adminFields(product)))
+  const dirty = busy || Boolean(pending) || metadataDirty || imageDirty || Boolean(imagePendingId)
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false) }, [dirty, onDirtyChange])
   useEffect(() => {
     if (!dirty) return
@@ -41,6 +45,8 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   function restore() {
     try { const attempt = readAdminEdit(accountId); setPending(attempt); if (attempt) setFields(adminFields(attempt.payload)); setStorageBlocked(false) }
     catch { setStorageBlocked(true); setError('ยังตรวจคำขอเดิมบนเครื่องไม่ได้ อย่าล้างข้อมูลเว็บหากมีคำขอรอยืนยัน') }
+    try { setImagePendingId(readAdminImage(accountId)?.productId ?? null) }
+    catch { setStorageBlocked(true); setError('ยังตรวจคำขอรูปเดิมบนเครื่องไม่ได้ อย่าล้างข้อมูลเว็บหากมีคำขอรอยืนยัน') }
   }
   useEffect(() => {
     mounted.current = true; restore()
@@ -84,7 +90,7 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   }
   async function loadList(reset = true, nextQuery = query) {
     const token = sessionRef.current?.token
-    if (!token || !start()) return
+    if (!token || imageBusy || !start()) return
     const generation = ++sequence.current
     try {
       const page = await adminList(apiOrigin, token, nextQuery, reset ? null : cursor)
@@ -96,7 +102,7 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   }
   async function openProduct(id: string, discard = false) {
     const token = sessionRef.current?.token
-    if (!token || !start()) return
+    if (!token || imageBusy || !start()) return
     try {
       const value = await adminDetail(apiOrigin, token, id)
       if (!mounted.current || sessionRef.current?.token !== token) return
@@ -108,12 +114,13 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   useEffect(() => {
     if (!online || !session || session.mustChangePassword || busyRef.current) return
     if (pending) void openProduct(pending.productId)
+    else if (imagePendingId) void openProduct(imagePendingId)
     else if (!loaded && !product) void loadList()
     // Reconnecting must not discard an unsent form or repeat an uncertain mutation.
   }, [session?.token, online])
   async function save() {
     const token = sessionRef.current?.token
-    if (!token || !product || !fields || storageBlocked || stale && !pending || !start()) return
+    if (!token || !product || !fields || storageBlocked || imageBusy || (!pending && imageDirty) || stale && !pending || !start()) return
     let attempt: AdminEdit
     try { attempt = pending ?? createAdminEdit(accountId, product, fields) }
     catch (e) { failure(e); finish(); return }
@@ -139,18 +146,18 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
     } finally { finish() }
   }
   function closeProduct() {
-    if (busy) return
+    if (busy || imageBusy) return
     if (dirty && !window.confirm('ออกจากสินค้านี้หรือไม่? คำขอที่ส่งแล้วจะเก็บรหัสไว้เพื่อตรวจสอบผล')) return
     if (pending) { setError('กรุณาตรวจสอบคำขอเดิมก่อนเปิดสินค้าอื่น'); return }
-    setProduct(null); setFields(null); setStale(false); setError(''); setMessage('')
+    setProduct(null); setFields(null); setStale(false); setError(''); setMessage(''); setImageDirty(false)
     if (!loaded) void loadList()
   }
   function back() {
-    if (busy) return
+    if (busy || imageBusy) return
     if (product && session && !session.mustChangePassword) closeProduct()
     else onBack()
   }
-  const locked = !online || busy || Boolean(pending) || storageBlocked || stale
+  const locked = !online || busy || Boolean(pending) || storageBlocked || stale || imageDirty
   const changing = Boolean(session?.mustChangePassword)
   return <section className="mobile-page focused-page admin-page" aria-labelledby="admin-title">
     <PageHeader title={product && session && !changing ? 'แก้ไขสินค้ากลาง' : 'ผู้ดูแลระบบ'} id="admin-title" onBack={back} />
@@ -167,6 +174,18 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
       </form> : product && fields ? <>
         <div className="matched-product"><ProductThumb imageUrl={product.imageUrl} /><div><h2>{product.name}</h2><p className="muted">SKU: {product.sku}</p><p className="muted">UPC / EAN: {product.upc ?? 'ยังไม่มี'}</p></div></div>
         <p className="pending-caption">แก้ข้อมูลกลางทั้งระบบ · ไม่เปลี่ยนยอดซื้อเดิม</p>
+        <AdminProductImage key={`${accountId}:${product.id}`} apiOrigin={apiOrigin} accountId={accountId} token={session.token} product={product} online={online}
+          disabled={busy || Boolean(pending) || metadataDirty || storageBlocked || stale}
+          onStateChange={state => { setImageDirty(state.dirty); setImageBusy(state.busy); setImagePendingId(state.pendingProductId) }}
+          onSessionError={failure} onConflict={() => setStale(true)} onSaved={async () => {
+            const token = sessionRef.current?.token
+            callbacks.current.onChanged(); setLoaded(false)
+            if (!token) return
+            try {
+              const latest = await adminDetail(apiOrigin, token, product.id)
+              if (mounted.current && sessionRef.current?.token === token) { setProduct(latest); setFields(adminFields(latest)); setStale(false) }
+            } catch (e) { if (mounted.current) { setStale(true); failure(e); setMessage('บันทึกรูปแล้ว แต่ยังโหลดข้อมูลล่าสุดไม่ได้') } }
+          }} />
         <form className="focused-form product-editor" onSubmit={event => { event.preventDefault(); void save() }}>
           <fieldset className="purchase-fieldset" disabled={locked}>
             <legend className="sr-only">รายละเอียดสินค้ากลาง</legend>
@@ -177,8 +196,8 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
             <label>หมวดหมู่<input value={fields.category} maxLength={100} onChange={event => setFields({ ...fields, category: event.target.value })} /></label>
           </fieldset>
           <details className="disclosure"><summary>ข้อมูลระบบ<Icon name="down" /></summary><div className="admin-metadata"><p>แหล่งข้อมูล: {product.source}</p><p>รหัสจากร้าน: {product.sourceProductId ?? 'ไม่มี'}</p>{product.sourceUrl ? <p>ลิงก์: {product.sourceUrl}</p> : null}<p>รหัสสินค้า: {product.id}</p><p>เวอร์ชัน: {product.revision}</p><p>สร้าง: {product.createdAt}</p><p>อัปเดต: {product.updatedAt}</p><p>ข้อมูลที่แต่ละบัญชีปรับไว้ยังคงเดิม</p></div></details>
-          {pending ? <div className="pending-change"><p>ยังรอยืนยันผล คำขออาจถูกบันทึกแล้ว</p><small>{pending.payload.operationId}</small><button type="button" className="primary-button" disabled={!online || busy || storageBlocked} onClick={() => void save()}>{busy ? 'กำลังตรวจสอบ…' : 'ตรวจสอบผลด้วยรหัสเดิม'}</button></div>
-            : <div className="page-actions"><button className="primary-button" disabled={locked}>{busy ? 'กำลังบันทึก…' : 'บันทึกข้อมูลกลาง'}</button><button type="button" className="text-button" disabled={busy} onClick={closeProduct}>กลับไปสินค้าทั้งหมด</button></div>}
+          {pending ? <div className="pending-change"><p>ยังรอยืนยันผล คำขออาจถูกบันทึกแล้ว</p><small>{pending.payload.operationId}</small><button type="button" className="primary-button" disabled={!online || busy || imageBusy || storageBlocked} onClick={() => void save()}>{busy ? 'กำลังตรวจสอบ…' : 'ตรวจสอบผลด้วยรหัสเดิม'}</button></div>
+            : <div className="page-actions"><button className="primary-button" disabled={locked}>{busy ? 'กำลังบันทึก…' : 'บันทึกข้อมูลกลาง'}</button><button type="button" className="text-button" disabled={busy || imageBusy} onClick={closeProduct}>กลับไปสินค้าทั้งหมด</button></div>}
         </form>
         {stale && !pending ? <button type="button" className="secondary-button" disabled={!online || busy} onClick={() => {
           if (!dirty || window.confirm('โหลดข้อมูลล่าสุดและละทิ้งแบบฟอร์มนี้หรือไม่?')) void openProduct(product.id, true)
@@ -187,7 +206,8 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
         <div className="summary-row"><h2>สินค้าทั้งระบบ</h2>{loaded ? <span className="status-chip">{total} สินค้า</span> : null}</div>
         <form className="search-form" role="search" onSubmit={event => { event.preventDefault(); void loadList(true, search) }}><div className="search-bar"><button className="icon-button" aria-label="ค้นหาสินค้าทั้งระบบ" disabled={!online || busy}><Icon name="search" /></button><input aria-label="ค้นหาสินค้าทั้งระบบ" type="search" maxLength={80} value={search} onChange={event => setSearch(event.target.value)} placeholder="ชื่อสินค้า, SKU หรือบาร์โค้ด" disabled={!online || busy} /></div></form>
         {pending ? <div className="pending-change"><p>มีคำขอแก้ไขที่รอยืนยันผล</p><button type="button" className="secondary-button" disabled={!online || busy} onClick={() => void openProduct(pending.productId)}>เปิดคำขอเดิม</button></div> : null}
-        <div className="product-library">{items.map(item => <div className="library-row" key={item.id}><button type="button" className="library-details" disabled={!online || busy || Boolean(pending)} onClick={() => void openProduct(item.id)} aria-label={`แก้ไข ${item.name}`}><ProductThumb imageUrl={item.imageUrl} /><span className="row-description"><strong>{item.name}</strong><small>{item.sku}</small>{item.upc ? <small>{item.upc}</small> : null}</span></button></div>)}</div>
+        {imagePendingId ? <div className="pending-change"><p>มีคำขอรูปสินค้ารอยืนยัน</p><button type="button" className="secondary-button" disabled={!online || busy || Boolean(pending)} onClick={() => void openProduct(imagePendingId)}>เปิดคำขอรูปเดิม</button></div> : null}
+        <div className="product-library">{items.map(item => <div className="library-row" key={item.id}><ProductThumb imageUrl={item.imageUrl} /><button type="button" className="library-details" disabled={!online || busy || Boolean(pending) || Boolean(imagePendingId)} onClick={() => void openProduct(item.id)} aria-label={`แก้ไข ${item.name}`}><span className="row-description"><strong>{item.name}</strong><small>{item.sku}</small>{item.upc ? <small>{item.upc}</small> : null}</span></button></div>)}</div>
         {busy ? <p role="status">กำลังโหลด…</p> : loaded && !items.length ? <p className="empty-state">ไม่พบสินค้า</p> : null}
         {cursor ? <button type="button" className="secondary-button" disabled={!online || busy} onClick={() => void loadList(false)}>ดูสินค้าเพิ่มเติม</button> : null}
         <div className="page-actions"><button type="button" className="secondary-button" disabled={!online || busy} onClick={() => void loadList()}>โหลดข้อมูลใหม่</button><button type="button" className="text-button" disabled={busy} onClick={onBack}>ออกจากผู้ดูแล</button></div>

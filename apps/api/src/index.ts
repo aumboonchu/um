@@ -24,6 +24,7 @@ import { checkoutRound, listRounds, roundDetail, ShoppingRoundError } from './sh
 import { changeProductProfile, ProductProfileError, withProductProfile } from './product-profile'
 import { AdminError, adminEligible, adminLogin, adminLogout, changeAdminPassword, requireAdmin } from './admin'
 import { adminProduct, changeAdminProduct, listAdminProducts } from './admin-catalog'
+import { changeAdminProductImage, ProductImageError, readProductImageAsset } from './product-images'
 
 type Bindings = { Bindings: AuthEnv; Variables: { adminAccountId: string } }
 
@@ -47,7 +48,8 @@ app.use('*', async (context, next) => {
   context.header('Referrer-Policy', 'no-referrer')
   context.header('X-Content-Type-Options', 'nosniff')
   context.header('X-Frame-Options', 'DENY')
-  context.header('Cross-Origin-Resource-Policy', 'same-site')
+  // Public, user-confirmed product crops may be displayed by the GitHub Pages frontend.
+  context.header('Cross-Origin-Resource-Policy', context.req.path.startsWith('/api/v1/product-images/') ? 'cross-origin' : 'same-site')
   context.header('Permissions-Policy', 'camera=(), geolocation=(), microphone=()')
   if (context.env.ENVIRONMENT === 'production') {
     context.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
@@ -68,6 +70,12 @@ app.get('/api/v1/health', (context) => {
     data: { status: 'ok', environment: context.env.ENVIRONMENT },
     meta: { requestId: getRequestId(context.req.raw) },
   })
+})
+
+app.get('/api/v1/product-images/:id/:file', async (context) => {
+  const match = /^([0-9a-f]{64})\.jpg$/.exec(context.req.param('file'))
+  if (!match) return context.json({ error: { code: 'NOT_FOUND' } }, 404)
+  return readProductImageAsset(context.req.param('id'), match[1], context.env)
 })
 
 // Separate elevated surface: ordinary Google login never grants catalog administration.
@@ -103,6 +111,10 @@ app.get('/api/v1/admin/products/:id', async (context) => {
 app.patch('/api/v1/admin/products/:id', async (context) => {
   const access = await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
   return context.json({ data: await changeAdminProduct(context.req.raw, context.req.param('id'), access, context.env) })
+})
+app.patch('/api/v1/admin/products/:id/image', async (context) => {
+  const access = await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
+  return context.json({ data: await changeAdminProductImage(context.req.raw, context.req.param('id'), access, context.env) })
 })
 
 app.get('/api/v1/products/upc/:upc', async (context) => {
@@ -324,6 +336,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof ProductImageError) return context.json({ error: { code: error.code, message: imageErrorMessage(error.code) } }, error.status)
   if (error instanceof AdminError) {
     context.header('Cache-Control', 'no-store')
     if (error.status === 429) context.header('Retry-After', '900')
@@ -363,6 +376,8 @@ export default app
 
 function imageErrorMessage(code: string): string {
   switch (code) {
+    case 'PRODUCT_IMAGE_INVALID': return 'รูปสินค้ายังไม่ถูกต้อง กรุณาครอปและยืนยันรูปใหม่'
+    case 'PRODUCT_IMAGE_TOO_LARGE': return 'รูปสินค้าที่ครอปใหญ่เกินไป กรุณาครอปใหม่ให้เล็กลง'
     case 'UNAUTHENTICATED': return 'กรุณาเข้าสู่ระบบก่อนอ่านภาพหรือเพิ่มสินค้า'
     case 'UNTRUSTED_ORIGIN': return 'กรุณาใช้หน้า SmartCart ที่ได้รับอนุญาต'
     case 'IMAGE_TOO_LARGE': return 'ภาพใหญ่เกินไป กรุณาใช้ภาพขนาดเล็กลง'
