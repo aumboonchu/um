@@ -56,9 +56,14 @@ async function scanKnown() {
   await waitFor(() => expect((screen.getByRole('button', { name: /^เพิ่มเข้ารอบ/ }) as HTMLButtonElement).disabled).toBe(false))
 }
 async function addCurrent() {
+  // A newly created product can render its quantity page before its cache write finishes.
+  // Wait for the real enabled control; a click on the disabled button is intentionally ignored.
+  await waitFor(() => expect((screen.getByRole('button', { name: /^เพิ่มเข้ารอบ/ }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: /^เพิ่มเข้ารอบ/ }))
   await screen.findByRole('heading', { name: 'รอบนี้' })
   await waitFor(() => expect((screen.getByRole('button', { name: /^ชำระเงิน ·/ }) as HTMLButtonElement).disabled).toBe(false))
+  // The parent restores tabs in response to the journey's post-render focus callback.
+  await screen.findByRole('navigation', { name: 'เมนูหลัก' })
 }
 async function manual(code: string) {
   fireEvent.click(screen.getByRole('button', { name: 'พิมพ์รหัส' }))
@@ -147,6 +152,7 @@ describe('mobile scan-first journey DOM integration', () => {
     fireEvent.change(screen.getByLabelText('ชื่อสินค้า'), { target: { value: 'OREO เพิ่มใหม่' } })
     fireEvent.click(screen.getByRole('button', { name: 'บันทึกและใส่ราคา' }))
     await screen.findByRole('heading', { name: 'เพิ่มเข้ารอบ' })
+    await waitFor(() => expect((screen.getByLabelText('ราคาต่อหน่วย (บาท)') as HTMLInputElement).disabled).toBe(false))
     const call = transport.send.mock.calls.find(([, path]) => path === '/api/v1/products')
     expect(JSON.parse(String(call?.[2]?.body))).toMatchObject({ upc: '3017620422003', name: 'OREO เพิ่มใหม่' })
     fireEvent.change(screen.getByLabelText('ราคาต่อหน่วย (บาท)'), { target: { value: '45' } }); await addCurrent()
