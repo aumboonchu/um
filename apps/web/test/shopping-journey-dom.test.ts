@@ -23,6 +23,7 @@ beforeEach(() => {
   transport.send.mockReset().mockImplementation(async (_origin: string, path: string, init?: RequestInit) => {
     if (path === '/auth/config') return json({ data: { googleEnabled: true } })
     if (path === '/auth/me') return json({ data: { authenticated: true, account: { id: currentUser, displayName: currentUser, primaryEmail: null, avatarUrl } } })
+    if (path === '/api/v1/admin/status') return json({ data: { eligible: true } })
     if (path.startsWith('/api/v1/products/upc/8851959129012')) return json({ data: known })
     if (path.startsWith('/api/v1/products/upc/3017620422003')) return added ? json({ data: unknown }) : json({ error: { code: 'PRODUCT_NOT_FOUND' } }, 404)
     if (path === '/api/v1/products') { added = true; return json({ data: unknown }, 201) }
@@ -77,6 +78,20 @@ async function savedDraft() {
   await screen.findByRole('heading', { name: 'รอบนี้' })
 }
 describe('mobile scan-first journey DOM integration', () => {
+  it('puts admin last on the Products page and opens its dedicated password screen without bottom tabs', async () => {
+    await app()
+    fireEvent.click(screen.getByRole('button', { name: 'สินค้า' }))
+    const entry = await screen.findByRole('button', { name: 'ผู้ดูแลระบบ' })
+    const content = entry.closest('.product-content')
+    expect(content?.lastElementChild).toBe(entry.parentElement)
+    expect(content?.querySelector('.page-actions')?.textContent).toContain('เพิ่มสินค้า')
+    fireEvent.click(entry)
+    await screen.findByRole('heading', { name: 'ผู้ดูแลระบบ' })
+    expect(screen.getByLabelText('รหัสผ่านผู้ดูแล')).toBeTruthy()
+    expect(screen.queryByRole('navigation', { name: 'เมนูหลัก' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'กลับ' }))
+    await screen.findByRole('heading', { name: 'สินค้า' })
+  })
   it('shows the authenticated Google photo across all primary tabs and account, without leaking it to a different account', async () => {
     avatarUrl = 'https://lh3.googleusercontent.com/a/dom-avatar'
     await app()

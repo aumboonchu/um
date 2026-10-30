@@ -4,6 +4,7 @@ import { ShoppingJourney } from './ShoppingJourney'
 import { RoundReports } from './RoundReports'
 import { useShoppingRounds } from './useShoppingRounds'
 import { HomeSummary, ProductDetailView, PurchaseDetailView } from './AccountViews'
+import { AdminEntry, AdminPanel } from './AdminPanel'
 import { getProductDetail, type ProductDetail } from './purchase-management'
 import { AccountAvatar, AccountPhotoContext, Icon, PageHeader, ProductThumb, useMobileViewport } from './ui'
 import {
@@ -16,7 +17,7 @@ import {
 type Account = { id: string; displayName: string | null; primaryEmail: string | null; avatarUrl?: string | null }
 type AuthResponse = { data: { authenticated: boolean; account: Account | null } }
 type Product = CachedProduct
-type AppView = 'home' | 'purchase' | 'history' | 'products' | 'account'
+type AppView = 'home' | 'purchase' | 'history' | 'products' | 'account' | 'admin'
 
 type PurchaseHistoryItem = {
   id: string
@@ -317,7 +318,7 @@ function App() {
   const pending = (pendingSyncCount ?? 0) + rounds.pending.length
   const busySync = isSyncing || rounds.syncing
   const showSync = !isOnline || pending > 0 || busySync || pendingSyncCount === null || Boolean(rounds.error)
-  const showNavigation = !detail && activeView !== 'account' && activeView !== 'home' && !(activeView === 'purchase' && shoppingFocused) && !(activeView === 'history' && reportFocused)
+  const showNavigation = !detail && activeView !== 'account' && activeView !== 'home' && activeView !== 'admin' && !(activeView === 'purchase' && shoppingFocused) && !(activeView === 'history' && reportFocused)
   return <AccountPhotoContext.Provider value={account?.avatarUrl ?? null}><main className="app-shell"><div className={`app-frame${account && !isLoading && showNavigation ? ' with-navigation' : ''}${account && !isLoading && showSync ? ' has-sync' : ''}`} data-view={activeView}>
     {!account || isLoading ? <section className="mobile-page login-page" aria-labelledby="login-title">
       <PageHeader title="SmartCart" id="login-title" />
@@ -356,6 +357,8 @@ function App() {
 
       {activeView === 'home' && !detail ? <div className="legacy-detail"><PageHeader title="ภาพรวมรายการซื้อ" onBack={() => navigate('account')} /><HomeSummary key={account.id} apiOrigin={apiOrigin} accountId={account.id} online={isOnline} version={dataVersion} pendingCount={pendingSyncCount} onAdd={() => navigate('purchase')} onHistory={() => navigate('history')} onPurchase={id => openDetail('purchase', id)} /></div> : null}
 
+      {activeView === 'admin' && !detail ? <AdminPanel key={account.id} apiOrigin={apiOrigin} accountId={account.id} online={isOnline} onBack={() => navigate('products')} onChanged={() => setDataVersion(value => value + 1)} onDirtyChange={setDetailsDirty} /> : null}
+
       <div className="view-page" hidden={activeView !== 'purchase' || Boolean(detail)}><ShoppingJourney key={account.id} accountId={account.id} apiOrigin={apiOrigin} online={isOnline} visible={activeView === 'purchase' && !detail} rounds={rounds} initialProduct={product} onConsumed={() => { setProduct(null); setAddImageAction(0) }} onAccount={openAccount} onFocusChange={setShoppingFocused} action={addImageAction} onReport={id => { navigate('history'); setReportId(id) }} /></div>
 
       {activeView === 'history' && !detail ? <div className="view-page"><RoundReports key={account.id} accountId={account.id} apiOrigin={apiOrigin} online={isOnline} version={dataVersion} rounds={rounds} initialRoundId={reportId} onAccount={openAccount} onFocusChange={setReportFocused} legacy={<details className="disclosure legacy-history"><summary>รายการเดิม<Icon name="down" /></summary><div>
@@ -373,6 +376,7 @@ function App() {
         {isOnline && !isLoadingProducts && !myProducts.length ? <p className="empty-state">ยังไม่มีสินค้าที่เคยซื้อ</p> : null}
         {isLoadingProducts ? <p role="status">กำลังโหลดสินค้า…</p> : null}{productsCursor ? <button className="secondary-button" onClick={() => void loadMyProducts(false)} disabled={isLoadingProducts}>ดูสินค้าเพิ่มเติม</button> : null}
         <div className="page-actions"><button className="secondary-button" disabled={!isOnline} onClick={() => { navigate('purchase'); setAddImageAction(value => value + 1) }}><Icon name="plusGreen" />เพิ่มสินค้า</button></div>
+        <AdminEntry key={account.id} apiOrigin={apiOrigin} accountId={account.id} online={isOnline} onOpen={() => navigate('admin')} />
       </div></section> : null}
 
       {showNavigation ? <nav className="bottom-nav" aria-label="เมนูหลัก">{([{ view: 'purchase', label: 'ซื้อสินค้า', activeIcon: 'scan', icon: 'scanMuted' }, { view: 'history', label: 'รายงาน', activeIcon: 'reportActive', icon: 'report' }, { view: 'products', label: 'สินค้า', activeIcon: 'boxActive', icon: 'boxMuted' }] as const).map(tab => <button key={tab.view} className={activeView === tab.view ? 'nav-active' : ''} aria-current={activeView === tab.view ? 'page' : undefined} disabled={rounds.busy} onClick={() => navigate(tab.view)}><span className="nav-icon"><Icon name={activeView === tab.view ? tab.activeIcon : tab.icon} /></span><span>{tab.label}</span></button>)}</nav> : null}

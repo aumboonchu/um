@@ -22,8 +22,10 @@ import { HistoryInputError, listMyProducts, listPurchaseHistory } from './histor
 import { changePurchase, dashboard, productDetail, purchaseDetail, PurchaseManagementError } from './purchase-management'
 import { checkoutRound, listRounds, roundDetail, ShoppingRoundError } from './shopping-rounds'
 import { changeProductProfile, ProductProfileError, withProductProfile } from './product-profile'
+import { AdminError, adminEligible, adminLogin, adminLogout, changeAdminPassword, requireAdmin } from './admin'
+import { adminProduct, changeAdminProduct, listAdminProducts } from './admin-catalog'
 
-type Bindings = { Bindings: AuthEnv }
+type Bindings = { Bindings: AuthEnv; Variables: { adminAccountId: string } }
 
 const app = new Hono<Bindings>()
 
@@ -33,7 +35,7 @@ app.use(
     origin: (origin, context) => {
       return origin === context.env.APP_ORIGIN ? origin : ''
     },
-    allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-SmartCart-Profile'],
+    allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-SmartCart-Profile', 'X-SmartCart-Admin'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   }),
@@ -66,6 +68,41 @@ app.get('/api/v1/health', (context) => {
     data: { status: 'ok', environment: context.env.ENVIRONMENT },
     meta: { requestId: getRequestId(context.req.raw) },
   })
+})
+
+// Separate elevated surface: ordinary Google login never grants catalog administration.
+app.use('/api/v1/admin/*', async (context, next) => {
+  const account = await currentAccount(context.req.raw, context.env)
+  if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
+  if (context.req.method !== 'GET' && context.req.header('Origin') !== context.env.APP_ORIGIN)
+    return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
+  context.set('adminAccountId', account.id)
+  await next()
+})
+app.get('/api/v1/admin/status', async (context) => {
+  return context.json({ data: { eligible: await adminEligible(context.get('adminAccountId'), context.env) } })
+})
+app.post('/api/v1/admin/login', async (context) => {
+  return context.json({ data: await adminLogin(context.req.raw, context.get('adminAccountId'), context.env) })
+})
+app.post('/api/v1/admin/password', async (context) => {
+  const access = await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env, true)
+  return context.json({ data: await changeAdminPassword(context.req.raw, access, context.env) })
+})
+app.post('/api/v1/admin/logout', async (context) => {
+  return context.json({ data: await adminLogout(await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env, true), context.env) })
+})
+app.get('/api/v1/admin/products', async (context) => {
+  await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
+  return context.json({ data: await listAdminProducts(new URL(context.req.url), context.env) })
+})
+app.get('/api/v1/admin/products/:id', async (context) => {
+  await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
+  return context.json({ data: await adminProduct(context.req.param('id'), context.env) })
+})
+app.patch('/api/v1/admin/products/:id', async (context) => {
+  const access = await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
+  return context.json({ data: await changeAdminProduct(context.req.raw, context.req.param('id'), access, context.env) })
 })
 
 app.get('/api/v1/products/upc/:upc', async (context) => {
@@ -287,6 +324,11 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof AdminError) {
+    context.header('Cache-Control', 'no-store')
+    if (error.status === 429) context.header('Retry-After', '900')
+    return context.json({ error: { code: error.code } }, error.status)
+  }
   if (error instanceof ProductProfileError) return context.json({ error: { code: error.code } }, error.status)
   if (error instanceof ShoppingRoundError) return context.json({ error: { code: error.code } }, error.status)
   if (error instanceof PurchaseManagementError) return context.json({ error: { code: error.code, message: error.code } }, error.status)

@@ -134,6 +134,22 @@ describe('remembered browser sessions', () => {
     expect(auth.browserSessionInfo(api)).toEqual({ remembered: true, expiresAt })
   })
 
+  it.each(['ADMIN_LOGIN_FAILED', 'ADMIN_SESSION_REQUIRED'])('does not sign out Google after an admin rejection %s', async code => {
+    persistent.setItem(key, record())
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: { code } }, 401)))
+    const auth = await import('../src/auth-client')
+    await auth.apiFetch(api, '/api/v1/admin/login', { method: 'POST' })
+    expect(auth.browserSessionInfo(api)).toEqual({ remembered: true, expiresAt })
+  })
+
+  it('still clears revoked Google authentication on admin endpoints', async () => {
+    persistent.setItem(key, record())
+    vi.stubGlobal('fetch', vi.fn(async () => json({ error: { code: 'UNAUTHENTICATED' } }, 401)))
+    const auth = await import('../src/auth-client')
+    await auth.apiFetch(api, '/api/v1/admin/status')
+    expect(auth.browserSessionInfo(api)).toBeNull()
+  })
+
   it.each([401, 200])('a late response %s for an old token does not clear a newer login', async (status) => {
     persistent.setItem(key, record(token, 1))
     let resolve!: (response: Response) => void

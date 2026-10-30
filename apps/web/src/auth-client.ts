@@ -110,7 +110,17 @@ export async function apiFetch(apiOrigin: string, path: string, init: RequestIni
   const token = storedSession(apiOrigin)?.session.token
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(destination, { ...init, headers, credentials: 'omit', cache: 'no-store' })
-  if (response.status === 401 && token) clearBrowserSession(apiOrigin, token)
+  if (response.status === 401 && token) {
+    // Admin password/session rejection is not a rejection of the Google session.
+    let rejectedGoogleSession = !destination.pathname.startsWith('/api/v1/admin')
+    if (!rejectedGoogleSession) {
+      try {
+        const payload = await response.clone().json() as { error?: { code?: string } }
+        rejectedGoogleSession = payload.error?.code === 'UNAUTHENTICATED'
+      } catch { /* A malformed admin reply must not erase an otherwise valid Google login. */ }
+    }
+    if (rejectedGoogleSession) clearBrowserSession(apiOrigin, token)
+  }
   if (response.ok && destination.pathname === '/auth/me' && token) {
     try {
       const payload = await response.clone().json() as { data?: { authenticated?: boolean } }

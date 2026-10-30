@@ -222,6 +222,14 @@ export async function currentAccount(request: Request, env: AuthEnv): Promise<Sm
   return { id: row.id, displayName: row.display_name, primaryEmail: row.primary_email, avatarUrl: googleAvatarUrl(row.avatar_url) }
 }
 
+// Admin elevation is bound to this exact live Google session, not just a user ID.
+export async function currentAuthSessionId(request: Request, env: AuthEnv): Promise<string | null> {
+  const token = requestSessionToken(request)
+  if (!token) return null
+  return env.DB.prepare('SELECT id FROM auth_sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?')
+    .bind(await sha256Hex(token), new Date().toISOString()).first<string>('id')
+}
+
 export async function revokeCurrentSession(request: Request, env: AuthEnv): Promise<void> {
   const sessionToken = requestSessionToken(request)
   if (!sessionToken) return

@@ -150,6 +150,10 @@ fieldset { min-width: 0; }
 .search-bar input { min-width: 0; border: 0; background: transparent; padding-left: 4px; }
 .search-bar .icon-button { background: transparent; }
 .product-content { gap: 12px; }
+.admin-entry { display: flex; justify-content: center; padding-top: 20px; border-top: 1px solid var(--sc-color-border); }
+.admin-entry .text-button { color: var(--sc-color-secondary); font-size: 15px; font-weight: 400; }
+.admin-page .admin-content { padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)); }
+.admin-metadata { color: var(--sc-color-secondary); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .product-library { display: block; }
 .library-row { display: flex; align-items: center; gap: 12px; min-height: 100px; border-bottom: 1px solid var(--sc-color-border); }
 .library-details { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 12px 0; border-radius: 0; color: inherit; background: transparent; text-align: left; }
