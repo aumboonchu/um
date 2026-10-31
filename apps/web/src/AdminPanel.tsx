@@ -8,6 +8,7 @@ import { Icon, PageHeader, ProductThumb } from './ui'
 import { AdminProductImage } from './AdminProductImage'
 import { readAdminImage } from './admin-product-image'
 import { AdminAccessLogs } from './AdminAccessLogs'
+import { AccessLogNotice } from './AccessLogNotice'
 
 export function AdminEntry({ apiOrigin, accountId, online, onOpen }: { apiOrigin: string; accountId: string; online: boolean; onOpen: () => void }) {
   const [eligible, setEligible] = useState(false)
@@ -173,6 +174,7 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
         <button type="button" aria-pressed={section === 'access-logs'} disabled={busy} onClick={() => { setSection('access-logs'); setError(''); setMessage('') }}>ประวัติเข้าใช้งาน</button>
       </nav> : null}
       {!session || changing ? <form className="focused-form" onSubmit={event => { event.preventDefault(); void signIn() }}>
+        <AccessLogNotice />
         {changing ? <><h2>ตั้งรหัสผ่านใหม่</h2><p className="muted">เปลี่ยนรหัสเริ่มต้นก่อนใช้งาน</p></> : <p className="muted">สำหรับบัญชีผู้ดูแลเท่านั้น</p>}
         <label>{changing ? 'รหัสผ่านใหม่' : 'รหัสผ่านผู้ดูแล'}<input type="password" value={password} autoComplete={changing ? 'new-password' : 'current-password'} minLength={changing ? 8 : 1} maxLength={128} required disabled={!online || busy} onChange={event => setPassword(event.target.value)} /></label>
         {changing ? <><p className="muted">อย่างน้อย 8 ตัวอักษร</p><label>ยืนยันรหัสผ่านใหม่<input type="password" value={confirmation} autoComplete="new-password" minLength={8} maxLength={128} required disabled={!online || busy} onChange={event => setConfirmation(event.target.value)} /></label></> : null}
