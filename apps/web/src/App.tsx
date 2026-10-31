@@ -5,6 +5,7 @@ import { RoundReports } from './RoundReports'
 import { useShoppingRounds } from './useShoppingRounds'
 import { HomeSummary, ProductDetailView, PurchaseDetailView } from './AccountViews'
 import { AdminEntry, AdminPanel } from './AdminPanel'
+import { AccessLogNotice } from './AccessLogNotice'
 import { getProductDetail, type ProductDetail } from './purchase-management'
 import { AccountAvatar, AccountPhotoContext, Icon, PageHeader, ProductThumb, useMobileViewport } from './ui'
 import {
@@ -330,6 +331,7 @@ function App() {
             <button className="primary-button google-button" onClick={() => void signInWithGoogle()} disabled={!googleEnabled || !isOnline || isSigningIn}><span aria-hidden="true">G</span>{isSigningIn ? 'กำลังเปิด Google…' : 'เข้าสู่ระบบด้วย Google'}</button>
             {(!googleEnabled || sessionInfo) && isOnline ? <button className="secondary-button" onClick={() => { setIsLoading(true); void loadAccount() }}>ตรวจสอบการเข้าสู่ระบบอีกครั้ง</button> : null}
             <p className="action-caption">จดจำบนเครื่องนี้อัตโนมัติ</p>
+            <AccessLogNotice />
           </>}
         </div>
       </div>
@@ -348,6 +350,7 @@ function App() {
         <details className="disclosure"><summary>การเข้าสู่ระบบ<Icon name="down" /></summary><div><p className="muted">{sessionInfo?.remembered ? `จดจำถึง ${formatDate(sessionInfo.expiresAt)} หากใช้เครื่องร่วมกับผู้อื่น ให้ออกจากระบบเมื่อเสร็จ` : 'เบราว์เซอร์ไม่อนุญาตให้จดจำถาวร ใช้ได้เฉพาะแท็บนี้'}</p><button type="button" className="secondary-button" disabled={!isOnline || isSigningIn} onClick={() => void signInWithGoogle()}>{isSigningIn ? 'กำลังเปิด Google…' : 'อัปเดตรูป Google'}</button></div></details>
         <details className="disclosure"><summary>พื้นที่เก็บข้อมูลออฟไลน์<Icon name="down" /></summary><div><p className="muted">ข้อมูลที่ยังไม่ซิงก์อาจสูญหายเมื่อเครื่องล้างพื้นที่ อย่าล้างข้อมูลเว็บก่อนซิงก์สำเร็จ</p><button className="secondary-button" onClick={() => { void requestPersistentStorage().then(result => setStorageInfo(result ? 'ได้รับสิทธิ์เก็บข้อมูลแล้ว แต่ยังควรซิงก์เสมอ' : 'เครื่องไม่ได้อนุญาต ยังบันทึกบนเครื่องและซิงก์ได้ตามปกติ')).catch(() => setStorageInfo('ตรวจสอบสิทธิ์ไม่ได้ โปรดซิงก์ข้อมูลเมื่อออนไลน์')) }}>ขอเก็บข้อมูลบนเครื่อง</button>{storageInfo ? <p role="status" className="muted">{storageInfo}</p> : null}</div></details>
         <details className="disclosure"><summary>ข้อมูลเพิ่มเติม<Icon name="down" /></summary><div><button className="secondary-button" onClick={() => navigate('home')}>ภาพรวมรายการซื้อ</button></div></details>
+        <AccessLogNotice />
         {authMessage ? <p role="status" className="error-message">{authMessage}</p> : null}
         <div className="page-actions"><button className="primary-button" onClick={() => navigate('purchase')}>กลับไปซื้อสินค้า</button><button className="text-button" onClick={() => void signOut()} disabled={isSigningOut}>{isSigningOut ? 'กำลังออกจากระบบ…' : 'ออกจากระบบ'}</button></div>
       </div></section> : null}

@@ -29,6 +29,13 @@ beforeEach(() => {
       return json({ data: { token: replacement, mustChangePassword: false, expiresAt: new Date(Date.now() + 900_000).toISOString() } })
     }
     if (path === '/api/v1/admin/logout') return json({ data: { signedOut: true } })
+    if (path.startsWith('/api/v1/admin/access-logs?')) {
+      expect(mustChange).toBe(false)
+      expect(new Headers(init?.headers).get('X-SmartCart-Admin')).toBe(replacement)
+      return json({ data: { items: [{ id: 'access-log', occurredAt: '2026-10-31T00:00:00.000Z', event: 'login_succeeded', outcome: 'success', reason: null,
+        userId: account, displayName: 'บัญชีในประวัติ', primaryEmail: 'audit@example.test', provider: 'google', browser: 'Safari', os: 'iOS', deviceType: 'Mobile', country: 'TH' }],
+        nextCursor: null, retentionDays: 90, collectionStartedAt: '2026-10-31T00:00:00.000Z' } })
+    }
     if (path.startsWith('/api/v1/admin/products?')) {
       expect(mustChange).toBe(false)
       return json({ data: { items: [current], nextCursor: null, total: 1 } })
@@ -81,6 +88,19 @@ async function editName(value: string) {
   fireEvent.change(screen.getByLabelText('ชื่อสินค้า'), { target: { value } })
 }
 describe('mobile admin journey', () => {
+  it('adds a protected access-log menu after required password change and returns to the unchanged catalog', async () => {
+    await mount(); await enterCatalog()
+    const menu = screen.getByRole('navigation', { name: 'เมนูผู้ดูแล' })
+    expect(menu).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'ประวัติเข้าใช้งาน' }))
+    await screen.findByText('บัญชีในประวัติ')
+    expect(screen.queryByRole('heading', { name: 'สินค้าทั้งระบบ' })).toBeNull()
+    expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'สินค้า' }))
+    expect(screen.queryByText('บัญชีในประวัติ')).toBeNull()
+    expect(screen.getByRole('button', { name: `แก้ไข ${current.name}` })).toBeTruthy()
+    expect(writes).toBe(0)
+  })
   it('keeps image viewers outside interactive row buttons and opens the crop without navigating to product editing', async () => {
     current = { ...current, imageUrl: 'https://example.test/cropped-product.jpg' }
     await mount(); await enterCatalog()
@@ -109,6 +129,7 @@ describe('mobile admin journey', () => {
     await mount(); await login()
     await screen.findByRole('heading', { name: 'ตั้งรหัสผ่านใหม่' })
     expect(transport.send.mock.calls.some(call => call[1].startsWith('/api/v1/admin/products'))).toBe(false)
+    expect(screen.queryByRole('navigation', { name: 'เมนูผู้ดูแล' })).toBeNull()
     fireEvent.change(screen.getByLabelText('รหัสผ่านใหม่'), { target: { value: 'new-password-123' } })
     fireEvent.change(screen.getByLabelText('ยืนยันรหัสผ่านใหม่'), { target: { value: 'not-matching' } })
     fireEvent.click(screen.getByRole('button', { name: 'เปลี่ยนรหัสผ่าน' }))

@@ -25,6 +25,7 @@ import { changeProductProfile, ProductProfileError, withProductProfile } from '.
 import { AdminError, adminEligible, adminLogin, adminLogout, changeAdminPassword, requireAdmin } from './admin'
 import { adminProduct, changeAdminProduct, listAdminProducts } from './admin-catalog'
 import { changeAdminProductImage, ProductImageError, readProductImageAsset } from './product-images'
+import { AccessLogQueryError, listAccessLogs, purgeAccessLogs, recordAccess } from './access-logs'
 
 type Bindings = { Bindings: AuthEnv; Variables: { adminAccountId: string } }
 
@@ -91,11 +92,21 @@ app.get('/api/v1/admin/status', async (context) => {
   return context.json({ data: { eligible: await adminEligible(context.get('adminAccountId'), context.env) } })
 })
 app.post('/api/v1/admin/login', async (context) => {
-  return context.json({ data: await adminLogin(context.req.raw, context.get('adminAccountId'), context.env) })
+  const userId = context.get('adminAccountId')
+  try {
+    const data = await adminLogin(context.req.raw, userId, context.env)
+    await recordAccess(context.req.raw, context.env, 'admin_login_succeeded', 'success', userId, 'SIGNED_IN')
+    return context.json({ data })
+  } catch (error) {
+    await recordAccess(context.req.raw, context.env, 'admin_login_failed', 'failure', userId, error instanceof AdminError ? error.code : 'INTERNAL_ERROR')
+    throw error
+  }
 })
 app.post('/api/v1/admin/password', async (context) => {
   const access = await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env, true)
-  return context.json({ data: await changeAdminPassword(context.req.raw, access, context.env) })
+  const data = await changeAdminPassword(context.req.raw, access, context.env)
+  await recordAccess(context.req.raw, context.env, 'admin_password_changed', 'success', access.userId, 'PASSWORD_CHANGED')
+  return context.json({ data })
 })
 app.post('/api/v1/admin/logout', async (context) => {
   return context.json({ data: await adminLogout(await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env, true), context.env) })
@@ -103,6 +114,11 @@ app.post('/api/v1/admin/logout', async (context) => {
 app.get('/api/v1/admin/products', async (context) => {
   await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
   return context.json({ data: await listAdminProducts(new URL(context.req.url), context.env) })
+})
+
+app.get('/api/v1/admin/access-logs', async (context) => {
+  await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
+  return context.json({ data: await listAccessLogs(new URL(context.req.url), context.env) })
 })
 app.get('/api/v1/admin/products/:id', async (context) => {
   await requireAdmin(context.req.raw, context.get('adminAccountId'), context.env)
@@ -336,6 +352,7 @@ app.post('/auth/logout', async (context) => {
 app.notFound((context) => context.json({ error: { code: 'NOT_FOUND', message: 'Route not found' } }, 404))
 
 app.onError((error, context) => {
+  if (error instanceof AccessLogQueryError) return context.json({ error: { code: 'INVALID_QUERY' } }, 400)
   if (error instanceof ProductImageError) return context.json({ error: { code: error.code, reason: error.reason, message: imageErrorMessage(error.code) } }, error.status)
   if (error instanceof AdminError) {
     context.header('Cache-Control', 'no-store')
@@ -372,7 +389,10 @@ function productErrorMessage(code: ProductLookupError['code']): string {
   }
 }
 
-export default app
+export default {
+  fetch: app.fetch,
+  async scheduled(_controller: ScheduledController, env: AuthEnv) { await purgeAccessLogs(env) },
+} satisfies ExportedHandler<AuthEnv>
 
 function imageErrorMessage(code: string): string {
   switch (code) {

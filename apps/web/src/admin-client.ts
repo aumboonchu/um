@@ -8,6 +8,15 @@ export type AdminProduct = {
   sourceProductId: string | null; sourceUrl: string | null; createdAt: string; updatedAt: string; revision: number;
 }
 export type AdminFields = { name: string; brand: string; packageSize: string; unit: string; category: string }
+export const adminAccessEvents = ['login_started', 'login_succeeded', 'login_failed', 'logout', 'admin_login_succeeded', 'admin_login_failed', 'admin_password_changed'] as const
+export type AdminAccessEvent = typeof adminAccessEvents[number]
+export type AdminAccessOutcome = 'success' | 'failure'
+export type AdminAccessLog = {
+  id: string; occurredAt: string; event: AdminAccessEvent; outcome: AdminAccessOutcome; reason: string | null;
+  userId: string | null; displayName: string | null; primaryEmail: string | null; provider: 'google' | 'admin';
+  browser: string | null; os: string | null; deviceType: string | null; country: string | null;
+}
+export type AdminAccessPage = { items: AdminAccessLog[]; nextCursor: string | null; retentionDays: number; collectionStartedAt: string | null }
 export type AdminEdit = { productId: string; payload: {
   accountId: string; operationId: string; expectedRevision: number; name: string;
   brand: string | null; packageSize: string | null; unit: string | null; category: string | null;
@@ -74,6 +83,39 @@ export async function adminDetail(apiOrigin: string, token: string, id: string):
   const data = await adminRequest(apiOrigin, `/products/${encodeURIComponent(id)}`, token)
   if (!isAdminProduct(data) || data.id !== id) throw new AdminError('ADMIN_RESPONSE_INVALID')
   return data
+}
+const boundedText = (value: unknown, max: number, nullable = true): value is string | null => value === null ? nullable
+  : typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value)
+const isoDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
+function isAccessLog(value: unknown): value is AdminAccessLog {
+  return record(value) && boundedText(value.id, 128, false) && isoDate(value.occurredAt)
+    && adminAccessEvents.some(event => event === value.event) && (value.outcome === 'success' || value.outcome === 'failure')
+    && (value.reason === null || typeof value.reason === 'string' && /^[A-Z_]{1,64}$/.test(value.reason))
+    && boundedText(value.userId, 128) && boundedText(value.displayName, 200) && boundedText(value.primaryEmail, 320)
+    && (value.provider === 'google' || value.provider === 'admin')
+    && (value.browser === null || ['Chrome', 'Chrome iOS', 'Edge', 'Firefox', 'Firefox iOS', 'Safari', 'Samsung Internet', 'Opera', 'Other'].some(browser => browser === value.browser))
+    && (value.os === null || ['iOS', 'Android', 'Windows', 'macOS', 'Linux', 'Other'].some(os => os === value.os))
+    && (value.deviceType === null || ['Mobile', 'Tablet', 'Desktop', 'Other'].some(device => device === value.deviceType))
+    && (value.country === null || typeof value.country === 'string' && /^[A-Z]{2}$/.test(value.country))
+}
+export async function adminAccessLogs(apiOrigin: string, token: string, filters: {
+  event?: AdminAccessEvent | ''; outcome?: AdminAccessOutcome | ''; cursor?: string | null;
+} = {}): Promise<AdminAccessPage> {
+  const params = new URLSearchParams({ limit: '30' })
+  if (filters.event) params.set('event', filters.event)
+  if (filters.outcome) params.set('outcome', filters.outcome)
+  if (filters.cursor) params.set('cursor', filters.cursor)
+  const data = await adminRequest(apiOrigin, `/access-logs?${params}`, token, { cache: 'no-store' })
+  if (!record(data) || !Array.isArray(data.items) || data.items.length > 30 || !data.items.every(isAccessLog)
+    || new Set(data.items.map(item => item.id)).size !== data.items.length
+    || !(data.nextCursor === null || boundedText(data.nextCursor, 2048, false))
+    || data.retentionDays !== 90 || !(data.collectionStartedAt === null || isoDate(data.collectionStartedAt)))
+    throw new AdminError('ADMIN_RESPONSE_INVALID')
+  // Return only documented fields: no credentials, raw headers or extra server fields enter UI state.
+  return { items: data.items.map(({ id, occurredAt, event, outcome, reason, userId, displayName, primaryEmail, provider, browser, os, deviceType, country }) =>
+    ({ id, occurredAt, event, outcome, reason, userId, displayName, primaryEmail, provider, browser, os, deviceType, country })),
+    nextCursor: data.nextCursor as string | null, retentionDays: 90, collectionStartedAt: data.collectionStartedAt as string | null }
 }
 export function createAdminEdit(accountId: string, product: AdminProduct, fields: AdminFields): AdminEdit {
   const normalize = (value: string, max: number, required = false) => {

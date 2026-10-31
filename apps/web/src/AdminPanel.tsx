@@ -7,6 +7,7 @@ import {
 import { Icon, PageHeader, ProductThumb } from './ui'
 import { AdminProductImage } from './AdminProductImage'
 import { readAdminImage } from './admin-product-image'
+import { AdminAccessLogs } from './AdminAccessLogs'
 
 export function AdminEntry({ apiOrigin, accountId, online, onOpen }: { apiOrigin: string; accountId: string; online: boolean; onOpen: () => void }) {
   const [eligible, setEligible] = useState(false)
@@ -25,6 +26,7 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
   apiOrigin: string; accountId: string; online: boolean; onBack: () => void; onChanged: () => void; onDirtyChange: (dirty: boolean) => void;
 }) {
   const [session, setSession] = useState<AdminSession | null>(null), [password, setPassword] = useState(''), [confirmation, setConfirmation] = useState('')
+  const [section, setSection] = useState<'products' | 'access-logs'>('products')
   const [items, setItems] = useState<AdminProduct[]>([]), [cursor, setCursor] = useState<string | null>(null), [total, setTotal] = useState(0)
   const [search, setSearch] = useState(''), [query, setQuery] = useState(''), [loaded, setLoaded] = useState(false)
   const [product, setProduct] = useState<AdminProduct | null>(null), [fields, setFields] = useState<AdminFields | null>(null)
@@ -106,7 +108,7 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
     try {
       const value = await adminDetail(apiOrigin, token, id)
       if (!mounted.current || sessionRef.current?.token !== token) return
-      setProduct(value); setFields(pending && !discard ? adminFields(pending.payload) : adminFields(value)); setStale(false); setMessage('')
+      setProduct(value); setSection('products'); setFields(pending && !discard ? adminFields(pending.payload) : adminFields(value)); setStale(false); setMessage('')
       window.scrollTo({ top: 0, behavior: 'auto' })
     } catch (e) { if (mounted.current) failure(e) }
     finally { finish() }
@@ -115,9 +117,9 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
     if (!online || !session || session.mustChangePassword || busyRef.current) return
     if (pending) void openProduct(pending.productId)
     else if (imagePendingId) void openProduct(imagePendingId)
-    else if (!loaded && !product) void loadList()
+    else if (section === 'products' && !loaded && !product) void loadList()
     // Reconnecting must not discard an unsent form or repeat an uncertain mutation.
-  }, [session?.token, online])
+  }, [session?.token, online, section])
   async function save() {
     const token = sessionRef.current?.token
     if (!token || !product || !fields || storageBlocked || imageBusy || (!pending && imageDirty) || stale && !pending || !start()) return
@@ -166,12 +168,19 @@ export function AdminPanel({ apiOrigin, accountId, online, onBack, onChanged, on
       {error ? <p className="error-message" role="alert">{error}</p> : null}
       {message ? <p className="inline-message" role="status">{message}</p> : null}
       {storageBlocked ? <button type="button" className="secondary-button" disabled={busy} onClick={restore}>ตรวจสอบคำขอเดิมบนเครื่อง</button> : null}
+      {session && !changing && !product ? <nav className="admin-section-menu" aria-label="เมนูผู้ดูแล">
+        <button type="button" aria-pressed={section === 'products'} disabled={busy} onClick={() => { setSection('products'); setError(''); setMessage('') }}>สินค้า</button>
+        <button type="button" aria-pressed={section === 'access-logs'} disabled={busy} onClick={() => { setSection('access-logs'); setError(''); setMessage('') }}>ประวัติเข้าใช้งาน</button>
+      </nav> : null}
       {!session || changing ? <form className="focused-form" onSubmit={event => { event.preventDefault(); void signIn() }}>
         {changing ? <><h2>ตั้งรหัสผ่านใหม่</h2><p className="muted">เปลี่ยนรหัสเริ่มต้นก่อนใช้งาน</p></> : <p className="muted">สำหรับบัญชีผู้ดูแลเท่านั้น</p>}
         <label>{changing ? 'รหัสผ่านใหม่' : 'รหัสผ่านผู้ดูแล'}<input type="password" value={password} autoComplete={changing ? 'new-password' : 'current-password'} minLength={changing ? 8 : 1} maxLength={128} required disabled={!online || busy} onChange={event => setPassword(event.target.value)} /></label>
         {changing ? <><p className="muted">อย่างน้อย 8 ตัวอักษร</p><label>ยืนยันรหัสผ่านใหม่<input type="password" value={confirmation} autoComplete="new-password" minLength={8} maxLength={128} required disabled={!online || busy} onChange={event => setConfirmation(event.target.value)} /></label></> : null}
         <div className="page-actions"><button className="primary-button" disabled={!online || busy}>{busy ? 'กำลังตรวจสอบ…' : changing ? 'เปลี่ยนรหัสผ่าน' : 'เข้าสู่ระบบผู้ดูแล'}</button></div>
-      </form> : product && fields ? <>
+      </form> : section === 'access-logs' && !product ? <>
+        <AdminAccessLogs key={`${accountId}:${session.token}`} apiOrigin={apiOrigin} token={session.token} online={online} onSessionError={failure} />
+        <button type="button" className="text-button" onClick={onBack}>ออกจากผู้ดูแล</button>
+      </> : product && fields ? <>
         <div className="matched-product"><ProductThumb imageUrl={product.imageUrl} /><div><h2>{product.name}</h2><p className="muted">SKU: {product.sku}</p><p className="muted">UPC / EAN: {product.upc ?? 'ยังไม่มี'}</p></div></div>
         <p className="pending-caption">แก้ข้อมูลกลางทั้งระบบ · ไม่เปลี่ยนยอดซื้อเดิม</p>
         <AdminProductImage key={`${accountId}:${product.id}`} apiOrigin={apiOrigin} accountId={accountId} token={session.token} product={product} online={online}

@@ -242,3 +242,24 @@ fieldset { min-width: 0; }
 @media (min-width: 600px) { .app-frame { box-shadow: 0 0 0 1px var(--sc-color-border); } .scanner-overlay { inset-inline: calc((100vw - min(100vw, 480px)) / 2); } }
 @media (max-width: 359px) { .page-content { padding-inline: 16px; } .page-header:not(.page-header-back) { padding-inline: 16px; } .alternative-actions { gap: 8px; } .alternative-actions > button { gap: 6px; padding-inline: 8px; font-size: 15px; } .payment-options > div { gap: 6px; } .payment-options button { gap: 4px; font-size: 15px; } .row-amount { min-width: 70px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+
+.admin-section-menu { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 6px; padding: 4px; border-radius: 16px; background: var(--sc-color-canvas); }
+.admin-section-menu button { min-width: 0; min-height: 48px; padding: 10px 8px; border-radius: 12px; color: var(--sc-color-secondary); background: transparent; font-size: 15px; }
+.admin-section-menu button[aria-pressed="true"] { color: var(--sc-color-emerald); background: var(--sc-color-soft); }
+.admin-access-logs { display: grid; gap: 16px; min-width: 0; }
+.admin-log-filters { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 12px; }
+.admin-log-filters label { min-width: 0; font-size: 15px; }
+.admin-log-filters select { width: 100%; min-width: 0; min-height: 48px; padding: 8px; border: 1px solid var(--sc-color-border); border-radius: 12px; color: var(--sc-color-ink); background: #fff; font: inherit; }
+.admin-log-notice { color: var(--sc-color-secondary); font-size: 13px; line-height: 20px; }
+.admin-log-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.admin-log-card { display: grid; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--sc-color-border); border-radius: 16px; overflow-wrap: anywhere; }
+.admin-log-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.admin-log-heading > strong { font-size: 17px; font-weight: 500; }
+.admin-log-outcome { flex-shrink: 0; padding: 2px 8px; border-radius: 999px; color: var(--sc-color-emerald); background: var(--sc-color-soft); font-size: 13px; line-height: 22px; }
+.admin-log-outcome.failure { color: #9d2529; background: #fff1f2; }
+.admin-log-card time, .admin-log-card > p { color: var(--sc-color-secondary); font-size: 13px; line-height: 20px; }
+.admin-log-account { display: flex; flex-direction: column; font-size: 15px; line-height: 24px; }
+.admin-log-account > strong { font-weight: 500; }
+.admin-log-reason span { font-family: monospace; }
+.admin-log-details { color: var(--sc-color-secondary); font-size: 13px; line-height: 20px; }
+.admin-log-details > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }

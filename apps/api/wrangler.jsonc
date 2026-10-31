@@ -26,6 +26,7 @@
   "env": {
     "staging": {
       "name": "smartcart-api-staging",
+      "triggers": { "crons": ["15 3 * * *"] },
       "ai": { "binding": "AI" },
       "vars": {
         "APP_ORIGIN": "https://aumboonchu.github.io",

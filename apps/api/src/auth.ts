@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { googleAvatarUrl } from './google-avatar'
+import { recordAccess } from './access-logs'
 
 export type AuthEnv = Env & {
   GOOGLE_CLIENT_ID?: string
@@ -98,6 +99,7 @@ export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<
     prompt: 'select_account',
   }).toString()
 
+  await recordAccess(request, env, 'login_started', 'success', null, 'STARTED')
   return Response.redirect(authorizationUrl.toString(), 302)
 }
 
@@ -110,7 +112,7 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
   const state = url.searchParams.get('state')
   const code = url.searchParams.get('code')
 
-  if (!state || !code || url.searchParams.has('error')) {
+  if (!state || !/^[A-Za-z0-9_-]{43}$/.test(state)) {
     return redirectToApp(env, 'auth=failed')
   }
 
@@ -139,6 +141,11 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
     return redirectToApp(env, 'auth=failed')
   }
 
+  if (!code || code.length > 4096 || url.searchParams.has('error')) {
+    await recordAccess(request, env, 'login_failed', 'failure', null, url.searchParams.has('error') ? 'PROVIDER_DENIED' : 'INVALID_REQUEST')
+    return redirectToApp(env, 'auth=failed')
+  }
+
   try {
     const tokens = await exchangeGoogleCode(code, transaction.code_verifier, env)
     const profile = await verifyGoogleIdentity(tokens.id_token, transaction.nonce, env)
@@ -154,6 +161,7 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
     destination.hash = new URLSearchParams({ login_code: loginCode }).toString()
     return Response.redirect(destination.toString(), 302)
   } catch {
+    await recordAccess(request, env, 'login_failed', 'failure', null, 'PROVIDER_ERROR')
     return redirectToApp(env, 'auth=failed')
   }
 }
@@ -167,7 +175,21 @@ export async function exchangeBrowserLogin(request: Request, env: AuthEnv): Prom
   if (request.headers.get('Origin') !== env.APP_ORIGIN) {
     return Response.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, { status: 403 })
   }
-  const invalid = () => Response.json({ error: { code: 'INVALID_LOGIN_CODE' } }, { status: 400 })
+  let failureCode: string | null = null
+  const invalid = async () => {
+    // Only a known, unconsumed handoff may reserve one anonymous failure event.
+    // Never attribute a failed verifier to the handoff's account or log arbitrary junk.
+    if (failureCode) {
+      try {
+        const now = new Date().toISOString()
+        const reserved = await env.DB.prepare(`UPDATE auth_login_codes SET failure_logged_at = ?
+          WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ? AND failure_logged_at IS NULL RETURNING code_hash`)
+          .bind(now, await sha256Hex(failureCode), now).first()
+        if (reserved) await recordAccess(request, env, 'login_failed', 'failure', null, 'INVALID_LOGIN_CODE')
+      } catch { console.error(JSON.stringify({ message: 'access_log_write_failed' })) }
+    }
+    return Response.json({ error: { code: 'INVALID_LOGIN_CODE' } }, { status: 400 })
+  }
   let input: unknown
   try {
     if (!request.headers.get('Content-Type')?.includes('application/json')) return invalid()
@@ -191,6 +213,7 @@ export async function exchangeBrowserLogin(request: Request, env: AuthEnv): Prom
     || typeof input.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(input.code)
     || typeof input.codeVerifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(input.codeVerifier)) return invalid()
 
+  failureCode = input.code
   // Atomic consumption: concurrent exchanges can create at most one session.
   const login = await env.DB.prepare(
     `UPDATE auth_login_codes SET consumed_at = ?
@@ -200,6 +223,7 @@ export async function exchangeBrowserLogin(request: Request, env: AuthEnv): Prom
     new Date().toISOString()).first<{ user_id: string }>()
   if (!login) return invalid()
   const sessionToken = await createSession(login.user_id, env)
+  await recordAccess(request, env, 'login_succeeded', 'success', login.user_id, 'SIGNED_IN')
   return Response.json({ data: { sessionToken, expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000).toISOString() } })
 }
 
@@ -234,11 +258,13 @@ export async function revokeCurrentSession(request: Request, env: AuthEnv): Prom
   const sessionToken = requestSessionToken(request)
   if (!sessionToken) return
 
-  await env.DB.prepare(
-    'UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+  const now = new Date().toISOString()
+  const revoked = await env.DB.prepare(
+    'UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL RETURNING user_id, expires_at',
   )
-    .bind(new Date().toISOString(), await sha256Hex(sessionToken))
-    .run()
+    .bind(now, await sha256Hex(sessionToken))
+    .first<{ user_id: string; expires_at: string }>()
+  if (revoked && revoked.expires_at > now) await recordAccess(request, env, 'logout', 'success', revoked.user_id, 'SIGNED_OUT')
 }
 
 export function clearSessionCookie(env: AuthEnv): string {
