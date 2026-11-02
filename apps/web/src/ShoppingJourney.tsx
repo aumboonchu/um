@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import BarcodeScanner from './BarcodeScanner'
 import ImageImport from './ImageImport'
+import { MissingProductGuide } from './MissingProductGuide'
 import { apiFetch } from './auth-client'
 import { cacheProduct, findCachedProduct, requestPersistentStorage, type CachedProduct } from './offline'
 import { formatMoney, localDateTime, purchaseFieldsPayload } from './purchase-management'
@@ -11,7 +12,8 @@ import { Icon, PageHeader, ProductThumb } from './ui'
 
 export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, rounds, initialProduct, onConsumed, onAccount, onReport, onFocusChange, action }: { accountId: string | null; apiOrigin: string; online: boolean; visible?: boolean; rounds: ShoppingRoundsController; initialProduct: CachedProduct | null; onConsumed: () => void; onAccount?: () => void; onReport?: (id: string) => void; onFocusChange?: (focused: boolean) => void; action?: number }) {
   const id = useId()
-  const [stage, setStage] = useState<'scan' | 'manual' | 'add' | 'image' | 'quantity'>('scan'), [upc, setUpc] = useState('')
+  const [stage, setStage] = useState<'scan' | 'manual' | 'add' | 'guide' | 'image' | 'quantity'>('scan'), [upc, setUpc] = useState('')
+  const [catalogMiss, setCatalogMiss] = useState<'database' | 'cache' | null>(null), [imageReturn, setImageReturn] = useState<'scan' | 'add'>('scan')
   const [product, setProduct] = useState<CachedProduct | null>(null), [name, setName] = useState(''), [brand, setBrand] = useState('')
   const [packageSize, setPackageSize] = useState('')
   const [price, setPrice] = useState(''), [quantity, setQuantity] = useState('1'), [note, setNote] = useState(''), [editing, setEditing] = useState<string | null>(null)
@@ -34,7 +36,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
     const leave = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', leave); return () => window.removeEventListener('beforeunload', leave)
   }, [product, checkout])
-  function reset() { sequence.current += 1; setProduct(null); setStage('scan'); setUpc(''); setEditing(null); setPrice(''); setQuantity('1'); setNote(''); setName(''); setBrand(''); setPackageSize(''); setError('') }
+  function reset() { sequence.current += 1; setProduct(null); setStage('scan'); setUpc(''); setCatalogMiss(null); setImageReturn('scan'); setEditing(null); setPrice(''); setQuantity('1'); setNote(''); setName(''); setBrand(''); setPackageSize(''); setError('') }
   function select(selected: CachedProduct) {
     setCompleted(null); setProduct(selected); setPrice(selected.sourcePriceMinor === null ? '' : (selected.sourcePriceMinor / 100).toFixed(2)); setQuantity('1'); setNote(''); setStage('quantity'); setError(''); setMessage('')
   }
@@ -43,7 +45,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
     const normalized = normalizeBarcode(code)
     if (!normalized) { setError('บาร์โค้ดไม่ถูกต้อง กรุณาสแกนหรือกรอก UPC / EAN อีกครั้ง'); return }
     const token = ++sequence.current
-    busy.current = true; setWorking(true); setError(''); setMessage('กำลังค้นหาในฐานข้อมูล SmartCart…'); setUpc(normalized)
+    busy.current = true; setWorking(true); setError(''); setMessage('กำลังค้นหาในฐานข้อมูล SmartCart…'); setUpc(normalized); setCatalogMiss(null)
     try {
       let found: CachedProduct | null = null
       if (!online) found = await findCachedProduct(normalized, accountId)
@@ -54,7 +56,7 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
       }
       if (!active.current || token !== sequence.current) return
       if (found) { select(found); try { await cacheProduct(found, accountId) } catch { setMessage('พบสินค้าแล้ว แต่ยังเก็บ cache ไม่ได้') } }
-      else { setName(''); setBrand(''); setProduct(null); setStage('add'); setMessage(online ? '' : 'ยังไม่มีในเครื่อง เชื่อมต่ออินเทอร์เน็ตเพื่อเพิ่มสินค้า') }
+      else { setName(''); setBrand(''); setProduct(null); setCatalogMiss(online ? 'database' : 'cache'); setStage('add'); setMessage('') }
     } catch { if (active.current && token === sequence.current) { setError('ยังค้นหาสินค้าไม่สำเร็จ ไม่ได้สรุปว่าไม่มีสินค้า กรุณาลองใหม่'); setMessage('') } }
     finally { busy.current = false; if (active.current) setWorking(false) }
   }
@@ -112,10 +114,14 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
   const showCart = stage === 'scan' && cartVisible && lines.length > 0
   const synced = completed ? rounds.closed.some(round => round.id === completed.id && round.status === 'synced') : false
   const lineAmount = Number(price) * 100 * Number(quantity)
-  function back() { reset(); setCheckout(false); setMessage(''); setCartVisible(lines.length > 0) }
+  function back() {
+    if (stage === 'guide' || (stage === 'image' && imageReturn === 'add')) { setStage('add'); setError(''); setMessage(''); return }
+    reset(); setCheckout(false); setMessage(''); setCartVisible(lines.length > 0)
+  }
   function newRound() { reset(); setCompleted(null); setCartVisible(false); setMessage('') }
-  function image() { setUpc(''); setStage('image'); setMessage(''); setCompleted(null) }
-  const pageTitle = completed ? (synced ? 'บันทึกรอบแล้ว' : 'เก็บรอบบนเครื่องแล้ว') : checkout ? 'จบรอบนี้' : stage === 'add' ? 'เพิ่มสินค้า' : stage === 'image' ? 'เพิ่มจากรูป' : stage === 'quantity' ? (editing ? 'แก้ไขรายการ' : 'เพิ่มเข้ารอบ') : stage === 'manual' ? 'พิมพ์บาร์โค้ด' : showCart ? 'รอบนี้' : 'ซื้อสินค้า'
+  function image() { setUpc(''); setImageReturn('scan'); setStage('image'); setMessage(''); setCompleted(null) }
+  function imageForMissingProduct() { setImageReturn('add'); setStage('image'); setMessage('') }
+  const pageTitle = completed ? (synced ? 'บันทึกรอบแล้ว' : 'เก็บรอบบนเครื่องแล้ว') : checkout ? 'จบรอบนี้' : stage === 'add' ? 'เพิ่มสินค้า' : stage === 'guide' ? 'วิธีเพิ่มสินค้า' : stage === 'image' ? 'เพิ่มจากรูป' : stage === 'quantity' ? (editing ? 'แก้ไขรายการ' : 'เพิ่มเข้ารอบ') : stage === 'manual' ? 'พิมพ์บาร์โค้ด' : showCart ? 'รอบนี้' : 'ซื้อสินค้า'
   return <section className={`shopping-journey mobile-page${stage !== 'scan' || checkout || completed ? ' focused-page' : ''}`} aria-labelledby="shopping-title">
     {!completed ? <PageHeader title={pageTitle} id="shopping-title" headingRef={title} onBack={checkout || stage !== 'scan' ? back : undefined} onAccount={stage === 'scan' && !checkout ? onAccount : undefined} /> : null}
     <div className={`page-content${stage === 'scan' && !checkout && !completed && !showCart ? ' scan-home' : ''}${completed ? ' completion-page' : ''}`}>
@@ -154,13 +160,17 @@ export function ShoppingJourney({ accountId, apiOrigin, online, visible = true, 
       </form> : null}
 
       {!completed && !checkout && stage === 'add' ? <form className="focused-form" onSubmit={e => void addProduct(e)}>
-        <span className="status-chip pending"><Icon name="boxWarning" />ยังไม่มีสินค้านี้</span><p className="muted barcode-value">{upc}</p>
+        <span className="status-chip pending"><Icon name="boxWarning" />{catalogMiss === 'cache' ? 'ยังไม่มีสินค้านี้ในเครื่อง' : 'ยังไม่มีสินค้านี้'}</span><p className="muted barcode-value">{upc}</p>
+        <button type="button" className="text-button product-guide-link" disabled={!canUse} onClick={() => setStage('guide')}>วิธีเพิ่มสินค้า</button>
+        {!online ? <p role="status" className="pending-caption">เชื่อมต่ออินเทอร์เน็ตเพื่อเพิ่มสินค้า</p> : null}
         {message ? <p role="status" className="pending-caption">{message}</p> : null}
         <label>ชื่อสินค้า<input value={name} onChange={e => setName(e.target.value)} maxLength={200} required disabled={!canUse || !online} placeholder="ชื่อสินค้า" /></label>
-        <button type="button" className="secondary-button" disabled={!canUse || !online} onClick={() => { setStage('image'); setMessage('') }}><Icon name="image" />เพิ่มข้อมูลจากรูป</button>
+        <button type="button" className="secondary-button" disabled={!canUse || !online} onClick={imageForMissingProduct}><Icon name="image" />เพิ่มข้อมูลจากรูป</button>
         <details className="disclosure"><summary>รายละเอียดเพิ่มเติม<Icon name="down" /></summary><div><label>แบรนด์<input value={brand} onChange={e => setBrand(e.target.value)} maxLength={100} disabled={!canUse || !online} /></label><label>ขนาด / บรรจุ<input value={packageSize} onChange={e => setPackageSize(e.target.value)} maxLength={100} placeholder="เช่น 24.6 g × 12" disabled={!canUse || !online} /></label></div></details>
         <div className="page-actions"><button className="primary-button" disabled={!canUse || !online || !name.trim()}>{working ? 'กำลังบันทึก…' : 'บันทึกและใส่ราคา'}</button></div>
       </form> : null}
+
+      {!completed && !checkout && stage === 'guide' ? <MissingProductGuide online={online} disabled={!canUse} onImage={imageForMissingProduct} onManual={() => setStage('add')} /> : null}
 
       {!completed && !checkout && stage === 'image' ? <ImageImport accountId={accountId} apiOrigin={apiOrigin} canImport={canUse && online} compact scannedUpc={upc || null} onProduct={value => {
         void cacheProduct(value, accountId).catch(() => {})

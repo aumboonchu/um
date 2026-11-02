@@ -89,6 +89,15 @@ fieldset { min-width: 0; }
 .saved-round strong { font-size: 17px; font-weight: 500; line-height: 26px; }
 .saved-round small { color: var(--sc-color-secondary); font-size: 15px; font-weight: 400; line-height: 24px; }
 .barcode-value { font-variant-numeric: tabular-nums; }
+.product-guide-link { align-self: flex-start; margin-top: -12px; padding-inline: 0; text-decoration: underline; text-underline-offset: 4px; }
+.missing-product-guide { display: flex; flex: 1; flex-direction: column; gap: 24px; min-width: 0; }
+.product-guide-steps { display: grid; gap: 24px; margin: 0; padding: 0; list-style: none; counter-reset: guide-step; }
+.product-guide-steps > li { display: flex; align-items: flex-start; gap: 12px; min-width: 0; counter-increment: guide-step; }
+.product-guide-steps > li::before { content: counter(guide-step); display: grid; flex: 0 0 36px; place-items: center; width: 36px; height: 36px; border-radius: 12px; color: var(--sc-color-emerald); background: var(--sc-color-soft); font-weight: 600; }
+.product-guide-steps > li > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.product-guide-steps h2 { font-size: 20px; line-height: 30px; }
+.product-guide-steps p { color: var(--sc-color-secondary); font-size: 15px; line-height: 24px; }
+.product-guide-steps .small-text { font-size: 13px; line-height: 20px; }
 .journey-scanner, .journey-scanner > .barcode-scan-button { width: 100%; }
 .cart-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
 .cart-heading .journey-scanner { width: auto; }
