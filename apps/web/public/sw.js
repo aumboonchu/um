@@ -17,6 +17,8 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
   const requestUrl = new URL(event.request.url)
   if (requestUrl.origin !== self.location.origin) return
+  // Other applications share this origin. Never intercept/cache outside this PWA's mount path.
+  if (!requestUrl.pathname.startsWith(new URL(self.registration.scope).pathname)) return
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME)

@@ -26,6 +26,7 @@ import { AdminError, adminEligible, adminLogin, adminLogout, changeAdminPassword
 import { adminProduct, changeAdminProduct, listAdminProducts } from './admin-catalog'
 import { changeAdminProductImage, ProductImageError, readProductImageAsset } from './product-images'
 import { AccessLogQueryError, listAccessLogs, purgeAccessLogs, recordAccess } from './access-logs'
+import { isAppOrigin } from './app-origins'
 
 type Bindings = { Bindings: AuthEnv; Variables: { adminAccountId: string } }
 
@@ -35,7 +36,7 @@ app.use(
   '*',
   cors({
     origin: (origin, context) => {
-      return origin === context.env.APP_ORIGIN ? origin : ''
+      return isAppOrigin(origin, context.env) ? origin : ''
     },
     allowHeaders: ['Content-Type', 'X-Request-Id', 'Authorization', 'X-SmartCart-Profile', 'X-SmartCart-Admin'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -83,7 +84,7 @@ app.get('/api/v1/product-images/:id/:file', async (context) => {
 app.use('/api/v1/admin/*', async (context, next) => {
   const account = await currentAccount(context.req.raw, context.env)
   if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
-  if (context.req.method !== 'GET' && context.req.header('Origin') !== context.env.APP_ORIGIN)
+  if (context.req.method !== 'GET' && !isAppOrigin(context.req.header('Origin'), context.env))
     return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
   context.set('adminAccountId', account.id)
   await next()
@@ -315,14 +316,14 @@ app.get('/api/v1/products/:id/detail', async (context) => {
 app.patch('/api/v1/products/:id/detail', async (context) => {
   const account = await currentAccount(context.req.raw, context.env)
   if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
-  if (context.req.header('Origin') !== context.env.APP_ORIGIN) return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
+  if (!isAppOrigin(context.req.header('Origin'), context.env)) return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
   return context.json({ data: await changeProductProfile(context.req.raw, context.req.param('id'), account.id, context.env) })
 })
 
 app.on(['GET', 'PATCH', 'DELETE'], '/api/v1/purchases/:id', async (context) => {
   const account = await currentAccount(context.req.raw, context.env)
   if (!account) return context.json({ error: { code: 'UNAUTHENTICATED' } }, 401)
-  if (context.req.method !== 'GET' && context.req.header('Origin') !== context.env.APP_ORIGIN) {
+  if (context.req.method !== 'GET' && !isAppOrigin(context.req.header('Origin'), context.env)) {
     return context.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, 403)
   }
   const data = context.req.method === 'GET' ? await purchaseDetail(context.req.param('id'), account.id, context.env)

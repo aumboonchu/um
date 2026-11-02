@@ -1,0 +1,31 @@
+name: Deploy custom domain frontend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smartcart-buy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generate binding types
+        run: npx wrangler types apps/api/src/env.d.ts --config apps/api/wrangler.jsonc && npm run types:buy
+      - name: Type check
+        run: npm run typecheck
+      - name: Deploy only the buy frontend
+        run: npm run deploy:buy

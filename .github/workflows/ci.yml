@@ -27,10 +27,13 @@ jobs:
         run: npx wrangler types src/env.d.ts
       - name: Check Worker binding types
         run: npm run types:check --workspace=@smartcart/api
+      - name: Generate buy host binding types
+        run: npm run types:buy
       - name: Type check
         run: npm run typecheck
       - name: Run web and API tests
         run: npm test
       - name: Build release artifacts
         run: npm run build
-
+      - name: Verify custom domain frontend package
+        run: npm run build:buy && npm run check:buy

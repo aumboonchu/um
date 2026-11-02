@@ -10,6 +10,10 @@
     "dev:web": "npm run dev --workspace=@smartcart/web",
     "dev:api": "npm run dev --workspace=@smartcart/api",
     "build": "npm run build --workspace=@smartcart/web && npm run build --workspace=@smartcart/api",
+    "build:buy": "node scripts/build-buy.mjs",
+    "types:buy": "wrangler types deploy/buy/worker-configuration.d.ts --config deploy/buy/wrangler.jsonc --env-interface BuyHostEnv --include-runtime false",
+    "check:buy": "wrangler deploy --config deploy/buy/wrangler.jsonc --dry-run",
+    "deploy:buy": "npm run build:buy && wrangler deploy --config deploy/buy/wrangler.jsonc --keep-vars --strict",
     "test": "npm run test --workspace=@smartcart/web && npm run test --workspace=@smartcart/api",
     "typecheck": "npm run typecheck --workspace=@smartcart/web && npm run typecheck --workspace=@smartcart/api"
   },
@@ -17,4 +21,3 @@
     "node": ">=22"
   }
 }
-

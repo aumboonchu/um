@@ -2,6 +2,8 @@ node_modules/
 .npm-cache/
 .workers-types-latest/
 apps/api/src/env.d.ts
+deploy/buy/worker-configuration.d.ts
+apps/web/dist-buy/
 dist/
 .wrangler/
 .dev.vars

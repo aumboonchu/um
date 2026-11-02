@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { googleAvatarUrl } from './google-avatar'
 import { recordAccess } from './access-logs'
+import { isAppOrigin, safeAppReturnTo } from './app-origins'
 
 export type AuthEnv = Env & {
   GOOGLE_CLIENT_ID?: string
@@ -56,14 +57,15 @@ export function getRequestId(request: Request): string {
 }
 
 export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<Response> {
+  const url = new URL(request.url)
+  const returnTo = safeAppReturnTo(url.searchParams.get('return_to'), env)
   if (!isGoogleLoginConfigured(env)) {
-    return redirectToApp(env, 'auth=setup_required')
+    return redirectToApp(env, 'auth=setup_required', returnTo)
   }
 
-  const url = new URL(request.url)
   const browserChallenge = url.searchParams.get('app_code_challenge')
   if (!browserChallenge || !/^[A-Za-z0-9_-]{43}$/.test(browserChallenge)) {
-    return redirectToApp(env, 'auth=failed')
+    return redirectToApp(env, 'auth=failed', returnTo)
   }
   const state = randomToken(32)
   const codeVerifier = randomToken(48)
@@ -80,7 +82,7 @@ export async function startGoogleLogin(request: Request, env: AuthEnv): Promise<
       await sha256Hex(state),
       codeVerifier,
       nonce,
-      safeReturnTo(url.searchParams.get('return_to'), env),
+      returnTo,
       expiresAt,
       browserChallenge,
     )
@@ -143,7 +145,7 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
 
   if (!code || code.length > 4096 || url.searchParams.has('error')) {
     await recordAccess(request, env, 'login_failed', 'failure', null, url.searchParams.has('error') ? 'PROVIDER_DENIED' : 'INVALID_REQUEST')
-    return redirectToApp(env, 'auth=failed')
+    return redirectToApp(env, 'auth=failed', transaction.return_to)
   }
 
   try {
@@ -156,13 +158,13 @@ export async function completeGoogleLogin(request: Request, env: AuthEnv): Promi
        VALUES (?, ?, ?, ?)`,
     ).bind(await sha256Hex(loginCode), account.id, transaction.browser_code_challenge,
       new Date(Date.now() + LOGIN_CODE_TTL_MS).toISOString()).run()
-    const destination = new URL(safeReturnTo(transaction.return_to, env))
+    const destination = new URL(safeAppReturnTo(transaction.return_to, env))
     // Only a short-lived, PKCE-bound code travels in the fragment, never a session token.
     destination.hash = new URLSearchParams({ login_code: loginCode }).toString()
     return Response.redirect(destination.toString(), 302)
   } catch {
     await recordAccess(request, env, 'login_failed', 'failure', null, 'PROVIDER_ERROR')
-    return redirectToApp(env, 'auth=failed')
+    return redirectToApp(env, 'auth=failed', transaction.return_to)
   }
 }
 
@@ -172,7 +174,7 @@ export function isGoogleLoginConfigured(env: AuthEnv): env is GoogleAuthEnv {
 }
 
 export async function exchangeBrowserLogin(request: Request, env: AuthEnv): Promise<Response> {
-  if (request.headers.get('Origin') !== env.APP_ORIGIN) {
+  if (!isAppOrigin(request.headers.get('Origin'), env)) {
     return Response.json({ error: { code: 'UNTRUSTED_ORIGIN' } }, { status: 403 })
   }
   let failureCode: string | null = null
@@ -273,7 +275,7 @@ export function clearSessionCookie(env: AuthEnv): string {
 
 export function isTrustedOrigin(request: Request, env: AuthEnv): boolean {
   const origin = request.headers.get('Origin')
-  return !origin || origin === env.APP_ORIGIN
+  return !origin || isAppOrigin(origin, env)
 }
 
 async function exchangeGoogleCode(
@@ -387,23 +389,11 @@ async function createSession(userId: string, env: AuthEnv): Promise<string> {
   return token
 }
 
-function redirectToApp(env: AuthEnv, query: string): Response {
-  const destination = new URL(env.APP_URL)
+function redirectToApp(env: AuthEnv, query: string, returnTo: string | null = null): Response {
+  const destination = new URL(safeAppReturnTo(returnTo, env))
   destination.search = query
+  destination.hash = ''
   return Response.redirect(destination.toString(), 302)
-}
-
-function safeReturnTo(returnTo: string | null, env: AuthEnv): string {
-  if (!returnTo) return env.APP_URL
-  try {
-    const candidate = new URL(returnTo)
-    const app = new URL(env.APP_URL)
-    if (candidate.origin === app.origin && candidate.pathname === app.pathname
-      && !candidate.username && !candidate.password) return candidate.toString()
-  } catch {
-    // Treat malformed return URLs as the default app destination.
-  }
-  return env.APP_URL
 }
 
 function googleCallbackUrl(env: AuthEnv): string {

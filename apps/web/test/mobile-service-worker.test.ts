@@ -2,15 +2,22 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 
-function worker() {
+function worker(scope = '/um/') {
   const handlers: Record<string, (event: any) => void> = {}
   const cache = { addAll: vi.fn(async () => {}), put: vi.fn(async () => {}), match: vi.fn(async (_key: unknown): Promise<Response | undefined> => undefined) }
   const caches = { open: vi.fn(async () => cache), keys: vi.fn(async () => ['smartcart-shell-v3', 'smartcart-shell-v4', 'unrelated-user-cache']), delete: vi.fn(async () => true) }
   const clients = { claim: vi.fn(async () => {}) }, fetch = vi.fn(async (_request: unknown): Promise<Response> => new Response('ok'))
-  runInNewContext(readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'), { URL, caches, fetch, self: { location: { origin: 'https://smartcart.test' }, clients, skipWaiting: vi.fn(), addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler } } })
+  runInNewContext(readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8'), { URL, caches, fetch, self: { location: { origin: 'https://smartcart.test' }, registration: { scope: `https://smartcart.test${scope}` }, clients, skipWaiting: vi.fn(), addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler } } })
   return { handlers, cache, caches, clients, fetch }
 }
 describe('mobile app shell upgrade safety', () => {
+  it('does not intercept the private Area app or path lookalikes on the same origin', () => {
+    const w = worker('/buy/'), respondWith = vi.fn()
+    for (const path of ['/', '/reports', '/buy-other/', '/buyer', '/api/private']) {
+      w.handlers.fetch({ request: { method: 'GET', url: `https://smartcart.test${path}` }, respondWith })
+    }
+    expect(respondWith).not.toHaveBeenCalled(); expect(w.caches.open).not.toHaveBeenCalled()
+  })
   it('cleans only outdated SmartCart shell caches, without accessing IndexedDB or unrelated caches', async () => {
     const w = worker(); let pending!: Promise<unknown>
     w.handlers.activate({ waitUntil: (value: Promise<unknown>) => { pending = value } }); await pending

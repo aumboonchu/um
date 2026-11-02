@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "smartcart-buy",
+  "account_id": "eeec93d3b1a9ffc9d1f08bcfe3083e4b",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "workers_dev": true,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "assets": {
+    "directory": "../../apps/web/dist-buy",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "aumboonchu.com/buy*", "zone_id": "39d064d3b940534bdd382f9d72042a49" }
+  ]
+}
